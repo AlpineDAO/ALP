@@ -115,66 +115,61 @@ export default function App() {
 
               return (
                 <div
-                  className={`border p-4 bg-card ${
-                    healthFactor >= 2
-                      ? "border-white"
-                      : healthFactor >= 1.5
-                        ? "border-green-400"
-                        : healthFactor >= 1.1
-                          ? "border-yellow-500"
-                          : "border-red-500"
-                  }`}
+                  className={`border p-4 bg-card ${healthFactor >= 2
+                    ? "border-white"
+                    : healthFactor >= 1.5
+                      ? "border-green-400"
+                      : healthFactor >= 1.1
+                        ? "border-yellow-500"
+                        : "border-red-500"
+                    }`}
                 >
                   <div className="space-y-3">
                     <h3
-                      className={`text-sm ${
-                        healthFactor >= 2
-                          ? "text-white"
-                          : healthFactor >= 1.5
-                            ? "text-green-400"
-                            : healthFactor >= 1.1
-                              ? "text-yellow-500"
-                              : "text-red-500"
-                      }`}
+                      className={`text-sm ${healthFactor >= 2
+                        ? "text-white"
+                        : healthFactor >= 1.5
+                          ? "text-green-400"
+                          : healthFactor >= 1.1
+                            ? "text-yellow-500"
+                            : "text-red-500"
+                        }`}
                     >
                       HEALTH FACTOR
                     </h3>
                     <div
-                      className={`font-mono text-sm ${
-                        healthFactor >= 2
-                          ? "text-white"
-                          : healthFactor >= 1.5
-                            ? "text-green-400"
-                            : healthFactor >= 1.1
-                              ? "text-yellow-500"
-                              : "text-red-500"
-                      }`}
+                      className={`font-mono text-sm ${healthFactor >= 2
+                        ? "text-white"
+                        : healthFactor >= 1.5
+                          ? "text-green-400"
+                          : healthFactor >= 1.1
+                            ? "text-yellow-500"
+                            : "text-red-500"
+                        }`}
                     >
                       {status.dots}
                     </div>
                     <div
-                      className={`text-lg font-mono ${
-                        healthFactor >= 2
-                          ? "text-white"
-                          : healthFactor >= 1.5
-                            ? "text-green-400"
-                            : healthFactor >= 1.1
-                              ? "text-yellow-500"
-                              : "text-red-500"
-                      }`}
+                      className={`text-lg font-mono ${healthFactor >= 2
+                        ? "text-white"
+                        : healthFactor >= 1.5
+                          ? "text-green-400"
+                          : healthFactor >= 1.1
+                            ? "text-yellow-500"
+                            : "text-red-500"
+                        }`}
                     >
                       {healthFactor}
                     </div>
                     <div
-                      className={`text-sm ${
-                        healthFactor >= 2
-                          ? "text-white"
-                          : healthFactor >= 1.5
-                            ? "text-green-400"
-                            : healthFactor >= 1.1
-                              ? "text-yellow-500"
-                              : "text-red-500"
-                      }`}
+                      className={`text-sm ${healthFactor >= 2
+                        ? "text-white"
+                        : healthFactor >= 1.5
+                          ? "text-green-400"
+                          : healthFactor >= 1.1
+                            ? "text-yellow-500"
+                            : "text-red-500"
+                        }`}
                     >
                       {status.symbol} {status.status}
                     </div>
@@ -191,7 +186,7 @@ export default function App() {
               ] = useState<"BTC" | "SUI">("BTC");
 
               return (
-                <div className="border border-accent p-4 bg-card">
+                <div className="border border-accent p-4 bg-card ">
                   <div className="space-y-4">
                     <h3 className="text-accent text-sm">
                       COLLATERAL CHOICE
@@ -199,11 +194,10 @@ export default function App() {
 
                     {/* BTC Option */}
                     <div
-                      className={`border p-4 cursor-pointer transition-colors ${
-                        selectedCollateral === "BTC"
-                          ? "border-white bg-background/20"
-                          : "border-accent/50 hover:border-accent"
-                      }`}
+                      className={`border p-4 cursor-pointer transition-colors ${selectedCollateral === "BTC"
+                        ? "border-white bg-background/20"
+                        : "border-accent/50 hover:border-accent"
+                        }`}
                       onClick={() =>
                         setSelectedCollateral("BTC")
                       }
@@ -252,40 +246,24 @@ export default function App() {
                               BTC
                             </div>
                             <div className="text-accent text-xs">
-                              SUPPLIED: 1.25 
-                            </div>
-                            <div className="flex space-x-2 mt-2">
-                              <AsciiButton
-                                variant="white"
-                                onClick={() => console.log("Add BTC clicked")}
-                              >
-                                ADD
-                              </AsciiButton>
-                              <AsciiButton
-                                variant="dark"
-                                onClick={() => console.log("Remove BTC clicked")}
-                              >
-                                REMOVE
-                              </AsciiButton>
+                              SUPPLIED: 1.25
                             </div>
                           </div>
                         </div>
                         <div
-                          className={`w-4 h-4 border border-accent self-center ${
-                            selectedCollateral === "BTC"
-                              ? "bg-white"
-                              : ""
-                          }`}
+                          className={`w-4 h-4 border border-accent self-center ${selectedCollateral === "BTC"
+                            ? "bg-white"
+                            : ""
+                            }`}
                         ></div>
                       </div>
                     </div>
                     {/* SUI Option */}
                     <div
-                      className={`border p-4 cursor-pointer transition-colors ${
-                        selectedCollateral === "SUI"
-                          ? "border-white bg-background/20"
-                          : "border-accent/50 hover:border-accent"
-                      }`}
+                      className={`border p-4 cursor-pointer transition-colors ${selectedCollateral === "SUI"
+                        ? "border-white bg-background/20"
+                        : "border-accent/50 hover:border-accent"
+                        }`}
                       onClick={() =>
                         setSelectedCollateral("SUI")
                       }
@@ -337,32 +315,33 @@ export default function App() {
                               SUPPLIED: 10
                             </div>
                             <div className="flex space-x-2 mt-2">
-                              <AsciiButton
-                                variant="white"
-                                onClick={() => console.log("Add SUI clicked")}
-                              >
-                                ADD
-                              </AsciiButton>
-                              <AsciiButton
-                                variant="dark"
-                                onClick={() => console.log("Remove SUI clicked")}
-                              >
-                                REMOVE
-                              </AsciiButton>
                             </div>
                           </div>
                         </div>
                         <div
-                          className={`w-4 h-4 border border-accent self-center ${
-                            selectedCollateral === "SUI"
-                              ? "bg-white"
-                              : ""
-                          }`}
+                          className={`w-4 h-4 border border-accent self-center ${selectedCollateral === "SUI"
+                            ? "bg-white"
+                            : ""
+                            }`}
                         ></div>
                       </div>
                     </div>
                     <div className="text-center text-accent text-xs font-mono mt-3">
                       Selected: {selectedCollateral}
+                    </div>
+                    <div className="flex space-x-4 justify-center mt-4">
+                      <AsciiButton
+                        variant="white"
+                        onClick={() => console.log("Add BTC clicked")}
+                      >
+                        ADD
+                      </AsciiButton>
+                      <AsciiButton
+                        variant="primary"
+                        onClick={() => console.log("Remove BTC clicked")}
+                      >
+                        WITHDRAW
+                      </AsciiButton>
                     </div>
                   </div>
                 </div>
