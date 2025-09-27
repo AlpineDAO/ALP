@@ -7,7 +7,7 @@ interface MetricCardProps {
 
 export function MetricCard({ title, value, change, indicator }: MetricCardProps) {
   return (
-    <div className="border border-accent bg-card p-6">
+    <div className="border border-accent bg-card p-6 rounded-[0px]">
       <div className="flex items-center justify-between mb-2">
         <span className="text-accent">◊</span>
         <span className="text-accent">◊</span>

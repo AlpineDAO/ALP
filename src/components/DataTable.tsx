@@ -22,12 +22,7 @@ export function DataTable({ data }: DataTableProps) {
       
       {/* Separator */}
       <div className="px-4 py-1 bg-secondary">
-        <div className="text-accent text-sm grid grid-cols-4 gap-4">
-          <div>════════════════════</div>
-          <div className="text-center">════════════════════</div>
-          <div className="text-center">════════════════════</div>
-          <div className="text-center">════════════════════</div>
-        </div>
+        <div className="text-accent text-sm">════════════╪════════════╪═════════════╪══════════</div>
       </div>
       
       {/* Data Rows */}
