@@ -109,6 +109,15 @@ module alp::alp {
         active: bool,
     }
 
+    /// Collateral vault for storing deposited tokens
+    public struct CollateralVault<phantom T> has key {
+        id: UID,
+        /// Balance of the collateral tokens
+        balance: Balance<T>,
+        /// Total amount deposited
+        total_deposited: u64,
+    }
+
     // ======== Events ========
     
     public struct PositionCreated has copy, drop {
@@ -185,6 +194,7 @@ module alp::alp {
     public entry fun create_position<T>(
         protocol_state: &mut ProtocolState,
         collateral_config: &mut CollateralConfig,
+        vault: &mut CollateralVault<T>,
         collateral: Coin<T>,
         alp_amount: u64,
         ctx: &mut TxContext
@@ -200,9 +210,11 @@ module alp::alp {
         let collateral_value = calculate_collateral_value(collateral_amount, &collateral_config.price_feed);
         
         // Calculate required collateral ratio
-        let alp_amount_128 = (alp_amount as u128);
-        let min_ratio_128 = (collateral_config.min_ratio as u128);
-        let required_collateral = ((alp_amount_128 * min_ratio_128) / 1_000_000_000u128) as u64;
+        // Use u128 to avoid overflow in intermediate calculation
+        let alp_amount_u128 = (alp_amount as u128);
+        let min_ratio_u128 = (collateral_config.min_ratio as u128);
+        let required_collateral_u128 = (alp_amount_u128 * min_ratio_u128) / 1_000_000_000;
+        let required_collateral = (required_collateral_u128 as u64);
         assert!(collateral_value >= required_collateral, EInsufficientCollateral);
         
         // Check debt ceiling
@@ -231,12 +243,16 @@ module alp::alp {
         
         // Update global collateral ratio
         if (protocol_state.total_alp_supply > 0) {
-            protocol_state.global_collateral_ratio = 
-                (((protocol_state.total_collateral_value as u128) * 1_000_000_000) / (protocol_state.total_alp_supply as u128) as u64);
+            // Use u128 to avoid overflow in intermediate calculation
+            let total_collateral_u128 = (protocol_state.total_collateral_value as u128);
+            let ratio_u128 = (total_collateral_u128 * 1_000_000_000) / (protocol_state.total_alp_supply as u128);
+            protocol_state.global_collateral_ratio = (ratio_u128 as u64);
         };
         
-        // Transfer collateral to protocol (in a real implementation, this would be held in escrow)
-        transfer::public_transfer(collateral, @alp);
+        // Store collateral in vault
+        let collateral_balance = coin::into_balance(collateral);
+        balance::join(&mut vault.balance, collateral_balance);
+        vault.total_deposited = vault.total_deposited + collateral_amount;
         
         // Transfer ALP to user
         transfer::public_transfer(alp_coins, tx_context::sender(ctx));
@@ -258,6 +274,7 @@ module alp::alp {
     public entry fun add_collateral<T>(
         protocol_state: &mut ProtocolState,
         collateral_config: &mut CollateralConfig,
+        vault: &mut CollateralVault<T>,
         position: &mut CollateralPosition,
         collateral: Coin<T>,
         ctx: &mut TxContext
@@ -280,12 +297,16 @@ module alp::alp {
         
         // Update global collateral ratio
         if (protocol_state.total_alp_supply > 0) {
-            protocol_state.global_collateral_ratio = 
-                (((protocol_state.total_collateral_value as u128) * 1_000_000_000) / (protocol_state.total_alp_supply as u128) as u64);
+            // Use u128 to avoid overflow in intermediate calculation
+            let total_collateral_u128 = (protocol_state.total_collateral_value as u128);
+            let ratio_u128 = (total_collateral_u128 * 1_000_000_000) / (protocol_state.total_alp_supply as u128);
+            protocol_state.global_collateral_ratio = (ratio_u128 as u64);
         };
         
-        // Transfer collateral to protocol
-        transfer::public_transfer(collateral, @alp);
+        // Store additional collateral in vault
+        let collateral_balance = coin::into_balance(collateral);
+        balance::join(&mut vault.balance, collateral_balance);
+        vault.total_deposited = vault.total_deposited + collateral_amount;
         
         // Emit event
         event::emit(PositionUpdated {
@@ -437,17 +458,130 @@ module alp::alp {
         });
     }
 
+    public entry fun withdraw_collateral<T>(
+        protocol_state: &mut ProtocolState,
+        collateral_config: &mut CollateralConfig,
+        vault: &mut CollateralVault<T>,
+        position: &mut CollateralPosition,
+        ctx: &mut TxContext
+    ) {
+        assert!(!protocol_state.paused, EUnauthorized);
+        assert!(position.owner == tx_context::sender(ctx), EUnauthorized);
+        assert!(position.alp_minted == 0, EInsufficientCollateral); // No debt remaining
+        
+        // Return all collateral to user
+        let collateral_amount = position.collateral_amount;
+        assert!(collateral_amount > 0, EInvalidAmount);
+        
+        // Calculate collateral value for protocol state update
+        let collateral_value = calculate_collateral_value(collateral_amount, &collateral_config.price_feed);
+        
+        // Withdraw collateral from vault and return to user
+        let withdrawn_balance = balance::split(&mut vault.balance, collateral_amount);
+        let withdrawn_coin = coin::from_balance(withdrawn_balance, ctx);
+        vault.total_deposited = vault.total_deposited - collateral_amount;
+        
+        // Update position
+        position.collateral_amount = 0;
+        position.last_update = tx_context::epoch_timestamp_ms(ctx);
+        
+        // Update protocol state
+        protocol_state.total_collateral_value = protocol_state.total_collateral_value - collateral_value;
+        
+        // Update global collateral ratio
+        if (protocol_state.total_alp_supply > 0) {
+            protocol_state.global_collateral_ratio = 
+                (protocol_state.total_collateral_value * 1_000_000_000) / protocol_state.total_alp_supply;
+        } else {
+            protocol_state.global_collateral_ratio = 0;
+        };
+        
+        // Transfer collateral back to user
+        transfer::public_transfer(withdrawn_coin, tx_context::sender(ctx));
+        
+        // Emit event
+        event::emit(PositionUpdated {
+            position_id: object::uid_to_address(&position.id),
+            owner: position.owner,
+            collateral_amount: 0,
+            alp_minted: 0,
+            action: b"withdraw",
+        });
+    }
+
+    /// Partially withdraw collateral from a position (maintaining safe collateral ratio)
+    public entry fun withdraw_partial_collateral<T>(
+        protocol_state: &mut ProtocolState,
+        collateral_config: &mut CollateralConfig,
+        vault: &mut CollateralVault<T>,
+        position: &mut CollateralPosition,
+        withdraw_amount: u64,
+        ctx: &mut TxContext
+    ) {
+        assert!(!protocol_state.paused, EUnauthorized);
+        assert!(position.owner == tx_context::sender(ctx), EUnauthorized);
+        assert!(withdraw_amount > 0, EInvalidAmount);
+        assert!(withdraw_amount <= position.collateral_amount, EInvalidAmount);
+        
+        // Calculate remaining collateral after withdrawal
+        let remaining_collateral = position.collateral_amount - withdraw_amount;
+        
+        // If there's debt, ensure remaining collateral maintains safe ratio
+        if (position.alp_minted > 0) {
+            let remaining_value = calculate_collateral_value(remaining_collateral, &collateral_config.price_feed);
+            // Use u128 to avoid overflow in intermediate calculation
+            let alp_minted_u128 = (position.alp_minted as u128);
+            let min_ratio_u128 = (collateral_config.min_ratio as u128);
+            let required_collateral_u128 = (alp_minted_u128 * min_ratio_u128) / 1_000_000_000;
+            let required_collateral = (required_collateral_u128 as u64);
+            assert!(remaining_value >= required_collateral, EInsufficientCollateral);
+        };
+        
+        // Calculate collateral value for protocol state update
+        let withdrawn_value = calculate_collateral_value(withdraw_amount, &collateral_config.price_feed);
+        
+        // Withdraw collateral from vault and return to user
+        let withdrawn_balance = balance::split(&mut vault.balance, withdraw_amount);
+        let withdrawn_coin = coin::from_balance(withdrawn_balance, ctx);
+        vault.total_deposited = vault.total_deposited - withdraw_amount;
+        
+        // Update position
+        position.collateral_amount = remaining_collateral;
+        position.last_update = tx_context::epoch_timestamp_ms(ctx);
+        
+        // Update protocol state
+        protocol_state.total_collateral_value = protocol_state.total_collateral_value - withdrawn_value;
+        
+        // Update global collateral ratio
+        if (protocol_state.total_alp_supply > 0) {
+            protocol_state.global_collateral_ratio = 
+                (((protocol_state.total_collateral_value as u128) * 1_000_000_000) / (protocol_state.total_alp_supply as u128)) as u64;
+        };
+        
+        // Transfer collateral back to user
+        transfer::public_transfer(withdrawn_coin, tx_context::sender(ctx));
+        
+        // Emit event
+        event::emit(PositionUpdated {
+            position_id: object::uid_to_address(&position.id),
+            owner: position.owner,
+            collateral_amount: position.collateral_amount,
+            alp_minted: position.alp_minted,
+            action: b"partial_withdraw",
+        });
+    }
+
     // ======== Helper Functions ========
     
     /// Calculate collateral value in USD terms
     fun calculate_collateral_value(amount: u64, price_feed: &PriceFeed): u64 {
         // Convert collateral amount to USD value using price feed
         // This assumes the price feed gives price in USD with 9 decimal places
-        // Use 128-bit arithmetic to prevent overflow
-        let amount_128 = (amount as u128);
-        let price_128 = (price_feed.price as u128);
-        let result_128 = (amount_128 * price_128) / 1_000_000_000u128;
-        (result_128 as u64)
+        // Use u128 to avoid overflow in intermediate calculation
+        let amount_u128 = (amount as u128);
+        let price_u128 = (price_feed.price as u128);
+        let result_u128 = (amount_u128 * price_u128) / 1_000_000_000;
+        (result_u128 as u64)
     }
     
     /// Calculate health factor for a position
@@ -460,7 +594,10 @@ module alp::alp {
         };
         
         let collateral_value = calculate_collateral_value(position.collateral_amount, &collateral_config.price_feed);
-        (((collateral_value as u128) * 1_000_000_000) / (position.alp_minted as u128) as u64)
+        // Use u128 to avoid overflow in intermediate calculation
+        let collateral_value_u128 = (collateral_value as u128);
+        let health_factor_u128 = (collateral_value_u128 * 1_000_000_000) / (position.alp_minted as u128);
+        (health_factor_u128 as u64)
     }
     
     /// Check if a position is liquidatable
@@ -502,6 +639,22 @@ module alp::alp {
         };
         
         transfer::share_object(config);
+    }
+
+    /// Create a new collateral vault for a specific token type
+    public entry fun create_collateral_vault<T>(
+        protocol_state: &ProtocolState,
+        ctx: &mut TxContext
+    ) {
+        assert!(protocol_state.admin == tx_context::sender(ctx), EUnauthorized);
+        
+        let vault = CollateralVault<T> {
+            id: object::new(ctx),
+            balance: balance::zero<T>(),
+            total_deposited: 0,
+        };
+        
+        transfer::share_object(vault);
     }
     
     /// Update price feed (to be called by oracle integration)
@@ -556,6 +709,14 @@ module alp::alp {
             config.current_debt,
             config.price_feed.price,
             config.active
+        )
+    }
+
+    /// Get vault information
+    public fun get_vault_info<T>(vault: &CollateralVault<T>): (u64, u64) {
+        (
+            balance::value(&vault.balance),
+            vault.total_deposited
         )
     }
 

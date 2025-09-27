@@ -4,7 +4,7 @@ module alp::liquidation_tests {
     use sui::coin;
     use sui::sui::SUI;
     use sui::transfer;
-    use alp::alp::{Self, ALP, ProtocolState, CollateralPosition, CollateralConfig};
+    use alp::alp::{Self, ALP, ProtocolState, CollateralPosition, CollateralConfig, CollateralVault};
     use alp::liquidation;
 
     // Test addresses
@@ -230,6 +230,19 @@ module alp::liquidation_tests {
             test::return_shared(protocol_state);
         };
 
+        // Create collateral vault
+        next_tx(scenario, ADMIN);
+        {
+            let protocol_state = test::take_shared<ProtocolState>(scenario);
+            
+            alp::create_collateral_vault<SUI>(
+                &protocol_state,
+                ctx(scenario)
+            );
+            
+            test::return_shared(protocol_state);
+        };
+
         // Update price to $2 per SUI
         next_tx(scenario, ADMIN);
         {
@@ -243,12 +256,14 @@ module alp::liquidation_tests {
         {
             let mut protocol_state = test::take_shared<ProtocolState>(scenario);
             let mut collateral_config = test::take_shared<CollateralConfig>(scenario);
+            let mut vault = test::take_shared<CollateralVault<SUI>>(scenario);
             
             let collateral = coin::mint_for_testing<SUI>(1000_000_000_000, ctx(scenario)); // 1000 SUI
             
             alp::create_position(
                 &mut protocol_state,
                 &mut collateral_config,
+                &mut vault,
                 collateral,
                 1000_000_000_000, // 1000 ALP
                 ctx(scenario)
@@ -256,6 +271,7 @@ module alp::liquidation_tests {
             
             test::return_shared(protocol_state);
             test::return_shared(collateral_config);
+            test::return_shared(vault);
         };
     }
 }
