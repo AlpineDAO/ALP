@@ -1390,6 +1390,87 @@ export default function App() {
                       >
                         {loading ? "BURNING..." : "BURN"}
                       </button>
+
+                      {/* REPAY ALL Button - Only show if user has ALP debt */}
+                      {userPositions.length > 0 && userPositions[0].alpMinted > 0n && (
+                        <button
+                          className="w-full text-xs font-mono px-4 py-2 border border-green-500 bg-card text-green-500 hover:bg-green-500 hover:text-background transition-colors"
+                          disabled={
+                            !currentAccount ||
+                            loading ||
+                            userPositions.length === 0 ||
+                            userPositions[0].alpMinted === 0n ||
+                            formatAmount(alpBalance) === "0" ||
+                            parseFloat(formatAmount(alpBalance)) < parseFloat(formatAmount(userPositions[0].alpMinted))
+                          }
+                          title={
+                            !currentAccount ? "Connect wallet first" :
+                            loading ? "Transaction in progress" :
+                            userPositions.length === 0 ? "No positions found" :
+                            userPositions[0].alpMinted === 0n ? "No ALP debt to repay" :
+                            formatAmount(alpBalance) === "0" ? "No ALP balance to repay with" :
+                            parseFloat(formatAmount(alpBalance)) < parseFloat(formatAmount(userPositions[0].alpMinted)) ?
+                              `Insufficient ALP. Need: ${formatAmount(userPositions[0].alpMinted)} ALP, Have: ${formatAmount(alpBalance)} ALP` :
+                            "Repay all ALP debt"
+                          }
+                          onClick={async () => {
+                            if (!currentAccount) {
+                              alert("Please connect your wallet first");
+                              return;
+                            }
+
+                            if (userPositions.length === 0) {
+                              alert("No position found");
+                              return;
+                            }
+
+                            const position = userPositions[0];
+                            const debtAmount = formatAmount(position.alpMinted);
+
+                            if (position.alpMinted === 0n) {
+                              alert("No ALP debt to repay");
+                              return;
+                            }
+
+                            if (parseFloat(formatAmount(alpBalance)) < parseFloat(debtAmount)) {
+                              alert(`Insufficient ALP balance. Need: ${debtAmount} ALP, Have: ${formatAmount(alpBalance)} ALP`);
+                              return;
+                            }
+
+                            try {
+                              console.log("Repaying all ALP debt:", {
+                                positionId: position.id,
+                                debtAmount,
+                                alpBalance: formatAmount(alpBalance)
+                              });
+
+                              // Validate position ownership
+                              if (position.owner !== currentAccount.address) {
+                                throw new Error(`Position ownership mismatch. Position owner: ${position.owner}, Current wallet: ${currentAccount.address}`);
+                              }
+
+                              await burnAlp(position.id, debtAmount);
+                              alert(`✅ Successfully repaid all ALP debt (${debtAmount} ALP)!`);
+                            } catch (error) {
+                              console.error("Error repaying ALP debt:", error);
+
+                              let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+                              if (errorMessage.includes('MoveAbort') && errorMessage.includes('6')) {
+                                errorMessage = "Authorization Error: You don't own this position or the protocol is paused.";
+                              } else if (errorMessage.includes('MoveAbort') && errorMessage.includes('2')) {
+                                errorMessage = "Insufficient ALP: You don't have enough ALP tokens to repay this debt.";
+                              } else if (errorMessage.includes('Position ownership mismatch')) {
+                                errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
+                              }
+
+                              alert(`Error repaying ALP debt: ${errorMessage}`);
+                            }
+                          }}
+                        >
+                          {loading ? "REPAYING..." : "REPAY ALL"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -510,6 +510,27 @@ export const useALP = () => {
                 const tx = new Transaction();
                 const alpAmountParsed = parseAmount(alpAmount);
 
+                // Get SUI coins for gas
+                const suiCoins = await suiClient.getCoins({
+                    owner: currentAccount.address,
+                    coinType: "0x2::sui::SUI",
+                });
+
+                if (suiCoins.data.length === 0) {
+                    throw new Error("No SUI coins available for gas");
+                }
+
+                // Set gas payment with the largest SUI coin
+                const largestSuiCoin = suiCoins.data.reduce((largest, coin) =>
+                    BigInt(coin.balance) > BigInt(largest.balance) ? coin : largest
+                );
+
+                tx.setGasPayment([{
+                    objectId: largestSuiCoin.coinObjectId,
+                    version: largestSuiCoin.version,
+                    digest: largestSuiCoin.digest
+                }]);
+
                 // Get ALP coins to burn
                 const alpCoins = await suiClient.getCoins({
                     owner: currentAccount.address,
@@ -520,11 +541,22 @@ export const useALP = () => {
                     throw new Error("No ALP coins available to burn");
                 }
 
+                // Check total ALP balance
+                const totalAlpBalance = alpCoins.data.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
+                if (totalAlpBalance < alpAmountParsed) {
+                    throw new Error(`Insufficient ALP balance. Need: ${formatAmount(alpAmountParsed)} ALP, Have: ${formatAmount(totalAlpBalance)} ALP`);
+                }
+
+                // Merge all ALP coins if there are multiple
+                let mainAlpCoin = tx.object(alpCoins.data[0].coinObjectId);
+                if (alpCoins.data.length > 1) {
+                    // Merge all other coins into the first one
+                    const otherCoins = alpCoins.data.slice(1).map(coin => tx.object(coin.coinObjectId));
+                    tx.mergeCoins(mainAlpCoin, otherCoins);
+                }
+
                 // Split the exact ALP amount to burn
-                const [alpCoin] = tx.splitCoins(
-                    tx.object(alpCoins.data[0].coinObjectId),
-                    [alpAmountParsed]
-                );
+                const [alpCoin] = tx.splitCoins(mainAlpCoin, [alpAmountParsed]);
 
                 // Call burn_alp function
                 tx.moveCall({
