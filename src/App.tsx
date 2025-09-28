@@ -1056,7 +1056,7 @@ export default function App() {
                           }
                         }}
                       >
-{loading || isAddingCollateral ?
+                        {loading || isAddingCollateral ?
                           (userPositions.length === 0 ? "CREATING POSITION..." : "DEPOSITING...") :
                           (userPositions.length === 0 ? "CREATE POSITION" : "DEPOSIT")
                         }
