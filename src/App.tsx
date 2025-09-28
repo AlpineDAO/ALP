@@ -648,8 +648,12 @@ export default function App() {
     // Calculate current ALP debt
     const currentAlpDebt = Number(formatAmount(position.alpMinted));
 
-    // Calculate max total ALP based on 150% ratio
-    const maxTotalAlp = totalCollateralValueChf / 1.5;
+    // Calculate max total ALP based on minimum collateral ratio with safety buffer
+    // Use minimum collateral ratio from constants (150% = 1.5) but add 10% safety buffer
+    const baseMinRatio = ALP_CONSTANTS.MIN_COLLATERAL_RATIO / 1_000_000_000; // 1.5 (150%)
+    const safetyBuffer = 1.4; // Add 10% safety buffer
+    const safeMinCollateralRatio = baseMinRatio * safetyBuffer; // 1.65 (165%)
+    const maxTotalAlp = totalCollateralValueChf / safeMinCollateralRatio;
 
     // Calculate additional ALP we can mint based on collateral
     const additionalAlpFromCollateral = Math.max(0, maxTotalAlp - currentAlpDebt);
@@ -675,7 +679,8 @@ export default function App() {
     console.log("💵 CHF to USD rate:", chfToUsdRate);
     console.log("📈 Total collateral USD:", totalCollateralValueUsd);
     console.log("📈 Total collateral CHF:", totalCollateralValueChf);
-    console.log("🎯 Max total ALP (150% ratio):", maxTotalAlp);
+    console.log("🎯 Max total ALP (165% safe ratio):", maxTotalAlp);
+    console.log("🔒 Safety buffer applied: 165% vs 150% minimum");
     console.log("➕ Additional from collateral:", additionalAlpFromCollateral);
     console.log("🏦 Debt ceiling:", debtCeiling);
     console.log("🏦 Current total debt:", currentTotalDebt);
@@ -1673,12 +1678,12 @@ export default function App() {
                         }
                         title={
                           !currentAccount ? "Connect wallet first" :
-                          !alpAmount ? "Enter amount to burn" :
-                          parseFloat(alpAmount) <= 0 ? "Enter valid amount > 0" :
-                          loading ? "Transaction in progress" :
-                          userPositions.length === 0 ? "No positions found - create one first" :
-                          parseFloat(alpAmount) > parseFloat(formatAmount(alpBalance)) ? `Insufficient ALP balance. Available: ${formatAmount(alpBalance)} ALP` :
-                          "Burn ALP tokens"
+                            !alpAmount ? "Enter amount to burn" :
+                              parseFloat(alpAmount) <= 0 ? "Enter valid amount > 0" :
+                                loading ? "Transaction in progress" :
+                                  userPositions.length === 0 ? "No positions found - create one first" :
+                                    parseFloat(alpAmount) > parseFloat(formatAmount(alpBalance)) ? `Insufficient ALP balance. Available: ${formatAmount(alpBalance)} ALP` :
+                                      "Burn ALP tokens"
                         }
                         onClick={async () => {
                           if (!currentAccount) {
@@ -1760,13 +1765,13 @@ export default function App() {
                           }
                           title={
                             !currentAccount ? "Connect wallet first" :
-                            loading ? "Transaction in progress" :
-                            userPositions.length === 0 ? "No positions found" :
-                            userPositions[0].alpMinted === 0n ? "No ALP debt to repay" :
-                            formatAmount(alpBalance) === "0" ? "No ALP balance to repay with" :
-                            parseFloat(formatAmount(alpBalance)) < parseFloat(formatAmount(userPositions[0].alpMinted)) ?
-                              `Insufficient ALP. Need: ${formatAmount(userPositions[0].alpMinted)} ALP, Have: ${formatAmount(alpBalance)} ALP` :
-                            "Repay all ALP debt"
+                              loading ? "Transaction in progress" :
+                                userPositions.length === 0 ? "No positions found" :
+                                  userPositions[0].alpMinted === 0n ? "No ALP debt to repay" :
+                                    formatAmount(alpBalance) === "0" ? "No ALP balance to repay with" :
+                                      parseFloat(formatAmount(alpBalance)) < parseFloat(formatAmount(userPositions[0].alpMinted)) ?
+                                        `Insufficient ALP. Need: ${formatAmount(userPositions[0].alpMinted)} ALP, Have: ${formatAmount(alpBalance)} ALP` :
+                                        "Repay all ALP debt"
                           }
                           onClick={async () => {
                             if (!currentAccount) {
@@ -1976,11 +1981,10 @@ export default function App() {
                       </div>
 
                       <div className="text-center">
-                        <div className={`text-sm font-mono px-4 py-2 border ${
-                          simulationResult.isLiquidatable
-                            ? 'border-red-400 text-red-400 bg-red-400/10'
-                            : 'border-green-400 text-green-400 bg-green-400/10'
-                        }`}>
+                        <div className={`text-sm font-mono px-4 py-2 border ${simulationResult.isLiquidatable
+                          ? 'border-red-400 text-red-400 bg-red-400/10'
+                          : 'border-green-400 text-green-400 bg-green-400/10'
+                          }`}>
                           {simulationResult.isLiquidatable
                             ? '⚠️ LIQUIDATABLE'
                             : '✅ SAFE'
