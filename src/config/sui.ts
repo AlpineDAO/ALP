@@ -15,7 +15,9 @@ export const { networkConfig, useNetworkVariable } = createNetworkConfig({
 });
 
 // Create Sui client - using testnet where contracts are deployed
-export const suiClient = new SuiClient({ url: getFullnodeUrl("testnet") });
+export const suiClient = new SuiClient({
+    url: getFullnodeUrl("testnet"),
+});
 
 // Contract addresses - Updated with deployed contract addresses
 export const CONTRACT_ADDRESSES = {

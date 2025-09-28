@@ -151,13 +151,27 @@ export default function App() {
       });
 
       if (suiCoins.data.length === 0) {
-        throw new Error("No SUI coins available");
+        throw new Error("No SUI coins available for collateral");
+      }
+
+      // Calculate total available SUI balance
+      const totalSuiBalance = suiCoins.data.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
+      const requiredAmount = parseAmount(amount);
+      const gasReserve = BigInt(10_000_000); // Reserve 0.01 SUI for gas
+
+      if (totalSuiBalance < requiredAmount + gasReserve) {
+        throw new Error(`Insufficient SUI balance. Available: ${formatAmount(totalSuiBalance - gasReserve)} SUI, Required: ${amount} SUI`);
       }
 
       const amountParsed = parseAmount(amount);
 
-      // Split the exact amount from the coin
-      const [collateralCoin] = tx.splitCoins(tx.object(suiCoins.data[0].coinObjectId), [amountParsed]);
+      // Use the largest coin and split the exact amount for collateral
+      const largestCoin = suiCoins.data.reduce((largest, coin) =>
+        BigInt(coin.balance) > BigInt(largest.balance) ? coin : largest
+      );
+
+      // Split the exact amount from the largest coin
+      const [collateralCoin] = tx.splitCoins(tx.object(largestCoin.coinObjectId), [amountParsed]);
 
       // Call add_collateral with the exact amount
       tx.moveCall({
@@ -285,7 +299,7 @@ export default function App() {
     }
   };
 
-  // Calculate total SUI holdings (available + collateral) - synchronous version for UI
+  // Calculate total SUI holdings - simplified version
   const calculateTotalSuiHoldings = () => {
     const availableSui = Number(formatAmount(suiBalance));
     const suppliedSui = userPositions.reduce((total, position) => {
@@ -294,7 +308,7 @@ export default function App() {
       }
       return total;
     }, 0);
-    
+
     return {
       available: availableSui,
       supplied: suppliedSui,
@@ -304,6 +318,54 @@ export default function App() {
 
   const healthFactor = calculateHealthFactor();
   const suiHoldings = calculateTotalSuiHoldings();
+
+  // Calculate maximum safe ALP amount based on collateral and health factor
+  const calculateMaxSafeAlpAmount = (collateralAmountSui: string): string => {
+    if (!collateralAmountSui || parseFloat(collateralAmountSui) <= 0) return "0";
+
+    // Get current SUI price in USD
+    const suiPriceUsd = getSuiPriceUsd();
+    const chfToUsdRate = getChfToUsdRate();
+
+    // Calculate collateral value in USD
+    const collateralValueUsd = parseFloat(collateralAmountSui) * suiPriceUsd;
+
+    // Calculate collateral value in CHF (ALP is pegged to CHF)
+    const collateralValueChf = collateralValueUsd / chfToUsdRate;
+
+    // Use minimum collateral ratio from contract (150%)
+    // Max ALP = Collateral Value CHF / 1.5
+    const maxAlpAmount = collateralValueChf / 1.5;
+
+    return maxAlpAmount.toFixed(6);
+  };
+
+  // Calculate maximum additional ALP for existing position
+  const calculateMaxAdditionalAlp = (): string => {
+    if (userPositions.length === 0) return "0";
+
+    const position = userPositions[0];
+    const currentCollateralSui = Number(formatAmount(position.collateralAmount));
+
+    // Get current SUI price in USD
+    const suiPriceUsd = getSuiPriceUsd();
+    const chfToUsdRate = getChfToUsdRate();
+
+    // Calculate total collateral value in CHF
+    const totalCollateralValueUsd = currentCollateralSui * suiPriceUsd;
+    const totalCollateralValueChf = totalCollateralValueUsd / chfToUsdRate;
+
+    // Calculate current ALP debt
+    const currentAlpDebt = Number(formatAmount(position.alpMinted));
+
+    // Calculate max total ALP based on 150% ratio
+    const maxTotalAlp = totalCollateralValueChf / 1.5;
+
+    // Calculate additional ALP we can mint
+    const additionalAlp = Math.max(0, maxTotalAlp - currentAlpDebt);
+
+    return additionalAlp.toFixed(6);
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -780,6 +842,9 @@ export default function App() {
                               SUPPLIED: {suiHoldings.supplied.toFixed(2)}
                             </div>
                             <div className="text-accent text-xs">
+                              AVAILABLE: {suiHoldings.available.toFixed(2)}
+                            </div>
+                            <div className="text-accent text-xs">
                               MCR : 130 %
                             </div>
                           </div>
@@ -825,6 +890,7 @@ export default function App() {
                         )}
                       </div>
                     </div>
+
                     <div className="flex justify-center space-x-3 mt-2">
                       <button
                         className="text-xs font-mono px-2 py-2 border border-white bg-white text-background hover:bg-accent/10 hover:text-white transition-colors text-[14px] px-[40px] py-[5px] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -863,8 +929,19 @@ export default function App() {
                             setIsAddingCollateral(true);
 
                             if (userPositions.length === 0) {
-                              // Create position with 0 ALP using direct SDK call
+                              // Create position with minimal ALP - simplified version
+                              console.log("Creating new position with collateral:", collateralAmount, "SUI");
+
                               const tx = new Transaction();
+
+                              // Parse amounts
+                              const collateralAmountParsed = parseAmount(collateralAmount);
+                              const minAlpAmount = 1; // 0.000000001 ALP (minimum possible on Sui with 9 decimals)
+
+                              console.log("Parsed amounts:", {
+                                collateralAmount: collateralAmountParsed.toString(),
+                                alpAmount: minAlpAmount
+                              });
 
                               // Get SUI coins
                               const suiCoins = await suiClient.getCoins({
@@ -873,16 +950,45 @@ export default function App() {
                               });
 
                               if (suiCoins.data.length === 0) {
-                                throw new Error("No SUI coins available");
+                                throw new Error("No SUI coins found in wallet");
                               }
 
-                              const collateralAmountParsed = parseAmount(collateralAmount);
-                              const alpAmount = 1; // No ALP minted, deposit only
+                              console.log("Available SUI coins:", suiCoins.data.length);
 
-                              // Split the exact collateral amount
-                              const [collateralCoin] = tx.splitCoins(tx.object(suiCoins.data[0].coinObjectId), [collateralAmountParsed]);
+                              // Reserve gas (0.01 SUI = 10_000_000 MIST)
+                              const gasReserve = 10_000_000n;
 
-                              // Call create_position with 0 ALP
+                              // Find a coin that can cover both collateral + gas
+                              const suitableCoin = suiCoins.data.find(coin =>
+                                BigInt(coin.balance) >= collateralAmountParsed + gasReserve
+                              );
+
+                              if (!suitableCoin) {
+                                throw new Error(`Insufficient SUI balance. Need at least ${formatAmount(collateralAmountParsed + gasReserve)} SUI (including gas reserve)`);
+                              }
+
+                              console.log("Using coin:", suitableCoin.coinObjectId, "with balance:", suitableCoin.balance);
+
+                              // Set this coin as gas payment
+                              tx.setGasPayment([{
+                                objectId: suitableCoin.coinObjectId,
+                                version: suitableCoin.version,
+                                digest: suitableCoin.digest
+                              }]);
+
+                              const [collateralCoin] = tx.splitCoins(
+                                tx.gas,
+                                [collateralAmountParsed]
+                              );
+
+                              console.log("Contract addresses:", {
+                                packageId: CONTRACT_ADDRESSES.PACKAGE_ID,
+                                protocolState: CONTRACT_ADDRESSES.PROTOCOL_STATE,
+                                collateralConfig: CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG,
+                                vault: CONTRACT_ADDRESSES.SUI_COLLATERAL_VAULT
+                              });
+
+                              // Call create_position
                               tx.moveCall({
                                 target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::create_position`,
                                 typeArguments: ["0x2::sui::SUI"],
@@ -891,22 +997,32 @@ export default function App() {
                                   tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
                                   tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_VAULT),
                                   collateralCoin,
-                                  tx.pure.u64(alpAmount.toString()),
+                                  tx.pure.u64(minAlpAmount),
                                 ],
                               });
+
+                              console.log("Transaction constructed, executing...");
 
                               // Execute transaction
                               await new Promise((resolve, reject) => {
                                 signAndExecuteTransaction(
-                                  {
-                                    transaction: tx
-                                  },
+                                  { transaction: tx },
                                   {
                                     onSuccess: async (result) => {
-                                      await refreshData();
+                                      console.log("Transaction successful:", result);
+                                      console.log("Transaction digest:", result.digest);
+
+                                      // Wait a bit for the transaction to be processed
+                                      setTimeout(async () => {
+                                        console.log("Refreshing data after transaction...");
+                                        await refreshData();
+                                        console.log("Data refreshed, positions:", userPositions.length);
+                                      }, 2000);
+
                                       resolve(result);
                                     },
                                     onError: (error) => {
+                                      console.error("Transaction failed:", error);
                                       reject(error);
                                     },
                                   }
@@ -924,13 +1040,26 @@ export default function App() {
                             setCollateralAmount("");
                           } catch (error) {
                             console.error("Error depositing collateral:", error);
-                            alert(`Error depositing collateral: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+                            // Provide more helpful error messages
+                            let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+                            if (errorMessage.includes('No valid gas coins')) {
+                              errorMessage = `Transaction failed: No valid gas coins found. Please ensure you have sufficient SUI balance (Current: ${formatAmount(suiBalance)} SUI). You need at least 0.1 SUI for gas fees plus the deposit amount.`;
+                            } else if (errorMessage.includes('Insufficient SUI balance')) {
+                              errorMessage = `${errorMessage}\n\nCurrent wallet balance: ${formatAmount(suiBalance)} SUI\nRequired: ${collateralAmount} SUI + 0.1 SUI (gas fees)`;
+                            }
+
+                            alert(`Error depositing collateral: ${errorMessage}`);
                           } finally {
                             setIsAddingCollateral(false);
                           }
                         }}
                       >
-                        {loading || isAddingCollateral ? "DEPOSITING..." : "DEPOSIT"}
+{loading || isAddingCollateral ?
+                          (userPositions.length === 0 ? "CREATING POSITION..." : "DEPOSITING...") :
+                          (userPositions.length === 0 ? "CREATE POSITION" : "DEPOSIT")
+                        }
                       </button>
 
                     </div>
@@ -952,9 +1081,16 @@ export default function App() {
 
                     {/* Amount Input */}
                     <div className="space-y-2">
-                      <label className="text-accent text-xs font-mono">
-                        AMOUNT
-                      </label>
+                      <div className="flex justify-between items-center">
+                        <label className="text-accent text-xs font-mono">
+                          AMOUNT
+                        </label>
+                        {userPositions.length > 0 && (
+                          <div className="text-accent text-xs font-mono">
+                            MAX: {calculateMaxAdditionalAlp()} ALP
+                          </div>
+                        )}
+                      </div>
                       <input
                         type="number"
                         value={alpAmount}
@@ -964,8 +1100,18 @@ export default function App() {
                         placeholder="0.00"
                         className="w-full p-3 bg-input-background border border-accent text-white font-mono text-sm focus:border-white focus:outline-none transition-colors"
                       />
-                      <div className="text-accent text-xs font-mono">
-                        CHF
+                      <div className="flex justify-between items-center">
+                        <div className="text-accent text-xs font-mono">
+                          CHF
+                        </div>
+                        {userPositions.length > 0 && (
+                          <button
+                            onClick={() => setAlpAmount(calculateMaxAdditionalAlp())}
+                            className="text-accent text-xs font-mono hover:text-white transition-colors"
+                          >
+                            [MAX]
+                          </button>
+                        )}
                       </div>
                     </div>
 

@@ -134,14 +134,25 @@ export const useALP = () => {
             console.log("Fetching positions for:", currentAccount.address);
             console.log("Looking for contract:", CONTRACT_ADDRESSES.PACKAGE_ID);
 
-            // Query for CollateralPosition objects owned by the user from the current contract only
+            // Try both with specific type filter and without filter to debug
             const response = await suiClient.getOwnedObjects({
                 owner: currentAccount.address,
                 filter: {
                     StructType: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::CollateralPosition`,
                 },
-                options: { showContent: true },
+                options: { showContent: true, showType: true },
             });
+
+            // Also get all objects to see what's there
+            const allObjects = await suiClient.getOwnedObjects({
+                owner: currentAccount.address,
+                options: { showContent: true, showType: true },
+            });
+
+            console.log("All owned objects:", allObjects.data.length);
+            console.log("Objects with ALP package:", allObjects.data.filter(obj =>
+                obj.data?.type?.includes(CONTRACT_ADDRESSES.PACKAGE_ID)
+            ));
 
             console.log("Raw response:", response);
 
@@ -149,6 +160,13 @@ export const useALP = () => {
             for (const obj of response.data) {
                 if (obj.data?.content && "fields" in obj.data.content) {
                     // Verify this is from the current contract package
+                    console.log("Checking position type:", {
+                        objectId: obj.data.objectId,
+                        type: obj.data.type,
+                        expectedPackage: CONTRACT_ADDRESSES.PACKAGE_ID,
+                        startsWith: obj.data.type?.startsWith(CONTRACT_ADDRESSES.PACKAGE_ID)
+                    });
+
                     if (
                         !obj.data.type?.startsWith(
                             CONTRACT_ADDRESSES.PACKAGE_ID
@@ -164,6 +182,19 @@ export const useALP = () => {
                     const collateralAmount = BigInt(fields.collateral_amount);
                     const alpMinted = BigInt(fields.alp_minted);
 
+                    // Convert collateral_type from ASCII array to string
+                    const collateralType = Array.isArray(fields.collateral_type)
+                        ? String.fromCharCode(...fields.collateral_type)
+                        : fields.collateral_type;
+
+                    console.log("Position found:", {
+                        id: obj.data.objectId,
+                        collateralAmount: collateralAmount.toString(),
+                        alpMinted: alpMinted.toString(),
+                        collateralType,
+                        rawCollateralType: fields.collateral_type
+                    });
+
                     // Calculate collateral ratio (simplified - would need actual price data)
                     const collateralRatio =
                         (Number(collateralAmount) / Number(alpMinted)) * 100; // Simplified calculation
@@ -173,7 +204,7 @@ export const useALP = () => {
                         owner: fields.owner,
                         collateralAmount,
                         alpMinted,
-                        collateralType: fields.collateral_type,
+                        collateralType,
                         lastUpdate: Number(fields.last_update),
                         accumulatedFee: BigInt(fields.accumulated_fee),
                         collateralRatio,
