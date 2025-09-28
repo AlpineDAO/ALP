@@ -161,22 +161,33 @@ export default function App() {
 
       // Calculate total available SUI balance
       const totalSuiBalance = suiCoins.data.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
-      const requiredAmount = parseAmount(amount);
+      const amountParsed = parseAmount(amount);
       const gasReserve = BigInt(10_000_000); // Reserve 0.01 SUI for gas
 
-      if (totalSuiBalance < requiredAmount + gasReserve) {
+      if (totalSuiBalance < amountParsed + gasReserve) {
         throw new Error(`Insufficient SUI balance. Available: ${formatAmount(totalSuiBalance - gasReserve)} SUI, Required: ${amount} SUI`);
       }
 
-      const amountParsed = parseAmount(amount);
-
-      // Use the largest coin and split the exact amount for collateral
-      const largestCoin = suiCoins.data.reduce((largest, coin) =>
-        BigInt(coin.balance) > BigInt(largest.balance) ? coin : largest
+      // Find a coin that can cover both collateral + gas
+      const suitableCoin = suiCoins.data.find(coin =>
+        BigInt(coin.balance) >= amountParsed + gasReserve
       );
 
-      // Split the exact amount from the largest coin
-      const [collateralCoin] = tx.splitCoins(tx.object(largestCoin.coinObjectId), [amountParsed]);      // Call add_collateral with the exact amount
+      if (!suitableCoin) {
+        throw new Error(`Insufficient SUI balance. Need at least ${formatAmount(amountParsed + gasReserve)} SUI (including gas reserve)`);
+      }
+
+      console.log("Using coin for add_collateral:", suitableCoin.coinObjectId, "with balance:", suitableCoin.balance);
+
+      // Set this coin as gas payment
+      tx.setGasPayment([{
+        objectId: suitableCoin.coinObjectId,
+        version: suitableCoin.version,
+        digest: suitableCoin.digest
+      }]);
+
+      // Split the exact amount from the gas coin
+      const [collateralCoin] = tx.splitCoins(tx.gas, [amountParsed]);      // Call add_collateral with the exact amount
       tx.moveCall({
         target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::add_collateral`,
         typeArguments: ["0x2::sui::SUI"],
@@ -1384,92 +1395,6 @@ export default function App() {
                 </div>
               );
             })()}
-          </section>
-
-          {/* Address Collateral Lookup Section */}
-          <section className="space-y-8 max-w-4xl mx-auto">
-            <h2 className="text-center text-foreground">
-              COLLATERAL LOOKUP
-            </h2>
-
-            <div className="border border-accent p-6 bg-card">
-              <div className="space-y-4">
-                <div className="text-center">
-                  <h3 className="text-accent text-sm mb-4">
-                    CHECK ANY ADDRESS COLLATERAL
-                  </h3>
-                  <div className="flex flex-col sm:flex-row gap-4 items-center justify-center max-w-2xl mx-auto">
-                    <input
-                      type="text"
-                      placeholder="0x4067d43651a66d0b41ba4bc945d21df9b75a14d4c40341ad156725c1f424550b"
-                      value={lookupAddress}
-                      onChange={(e) => setLookupAddress(e.target.value)}
-                      className="flex-1 px-3 py-2 bg-background border border-accent text-foreground font-mono text-sm min-w-0"
-                      disabled={isLookingUp}
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!lookupAddress.trim()) {
-                          alert("Please enter an address");
-                          return;
-                        }
-
-                        try {
-                          await checkAddressCollateral(lookupAddress.trim());
-                        } catch (error) {
-                          alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                        }
-                      }}
-                      disabled={isLookingUp || !lookupAddress.trim()}
-                      className="px-6 py-2 bg-accent text-background font-mono text-sm hover:bg-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                    >
-                      {isLookingUp ? "CHECKING..." : "CHECK"}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Results Display */}
-                {lookupResults.length > 0 && (
-                  <div className="mt-6 space-y-4">
-                    <h4 className="text-accent text-sm text-center">
-                      FOUND {lookupResults.length} POSITION{lookupResults.length !== 1 ? 'S' : ''}
-                    </h4>
-                    <div className="grid gap-4">
-                      {lookupResults.map((position, index) => (
-                        <div key={position.id} className="border border-accent/50 p-4 bg-card/50">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm font-mono">
-                            <div>
-                              <div className="text-accent mb-1">POSITION #{index + 1}</div>
-                              <div className="space-y-1">
-                                <div>ID: {position.id.slice(0, 20)}...</div>
-                                <div>OWNER: {position.owner.slice(0, 20)}...</div>
-                                <div>TYPE: {position.collateralType}</div>
-                                <div>UPDATED: {position.lastUpdate}</div>
-                              </div>
-                            </div>
-                            <div>
-                              <div className="text-accent mb-1">AMOUNTS</div>
-                              <div className="space-y-1">
-                                <div>COLLATERAL: {position.collateralAmount} SUI</div>
-                                <div>ALP DEBT: {position.alpMinted} ALP</div>
-                                <div>RATIO: {position.collateralRatio}%</div>
-                                <div>FEES: {position.accumulatedFee} ALP</div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {lookupResults.length === 0 && lookupAddress && !isLookingUp && (
-                  <div className="text-center text-accent text-sm mt-4">
-                    NO POSITIONS FOUND FOR THIS ADDRESS
-                  </div>
-                )}
-              </div>
-            </div>
           </section>
 
           {/* Metrics Section */}
