@@ -19,30 +19,30 @@ export const suiClient = new SuiClient({
     url: getFullnodeUrl("testnet"),
 });
 
-// Contract addresses - Updated with deployed contract addresses
+// Contract addresses - Updated with FIXED deployed contract addresses (NEW DEPLOYMENT)
 export const CONTRACT_ADDRESSES = {
-    // Deployed package and contract addresses
+    // FIXED CONTRACT DEPLOYMENT - September 2025
     PACKAGE_ID:
-        "0xc9e0410bd6a360b0676d325034cddb021135cf0af205318e31569a1aaa9dd6c6",
+        "0x91fe36dcec97ad2f19ed9815328471686a9a358147ae0a04cbe0c85b4bd1d7f2",
     ALP_COIN_TYPE:
-        "0xc9e0410bd6a360b0676d325034cddb021135cf0af205318e31569a1aaa9dd6c6::alp::ALP",
+        "0x91fe36dcec97ad2f19ed9815328471686a9a358147ae0a04cbe0c85b4bd1d7f2::alp::ALP",
     PROTOCOL_STATE:
-        "0x9b68e3fb90da406a4ac767d2304ef742cdd6c0dce67e39df865b1e33e578e88a",
+        "0x86efed23f80b7052c052e5a6870f976cc5267406f491c1cd02558ed6af74723e",
     ORACLE_STATE:
-        "0x69c8679559fd8203ad936c8b820af80d35643e3e86c72f3e23615c60d6e4979b",
+        "0xea3d97e9b5e83639ce9b01de927f9f87d90d6a113d17d3f6aa6124041da8d498",
     ORACLE_MANAGER_CAP:
-        "0xee6491c6a4d446bf87f6de941e7f21b3f3addd9e552d1a7285665ded24c47ad3",
+        "0x898660d220d8491b852fd4aa1b9dc061e4cf18ac7cdbc26c89023242993fdc32",
     LIQUIDATION_MANAGER_CAP:
-        "0xc686f14ce356a243d8e6ee38560794aa07e19ee9b6d4a5aee53115a21e11b0d1",
+        "0xb06c79d213cfeb8f29baf0c95ae0a888547dd1e01529f99d371c27c6dd1f1eb4",
     UPGRADE_CAP:
-        "0x2af5e5c4e67877ce026213ad3c1762a82db96c745a90a5fa7ba3eb22ca2675f2",
+        "0x771ad4007f7388fdd0430b770b770d0b13d95a8044d701a6869e3bb61d65bd88",
     ALP_COIN_METADATA:
-        "0x803cb4f24315b4fbaa0604479f134cb71cc4fc624a70626af1ee3e38ff4d0823",
-    // Collateral configurations (you'll create these for each collateral type)
+        "0x782fb7e25afabdc1186fa6ba825c6b6ec39b2f2d1e97f581c3d4a04a1259d79a",
+    // Collateral configurations (CREATED with initial price $0.40)
     SUI_COLLATERAL_CONFIG:
-        "0xe6208a18345e338738c51fbad3fccf796d59258b26422bfaf27986cd3ae53ffa",
+        "0xdc970f31e248ef25dec66e205f8df18e629f0ce44d3800ccccc741427bb0f9f9",
     SUI_COLLATERAL_VAULT:
-        "0xca9c74ca16a1821e4640e1f10a5151ea026a92a4d3dae966b78632e00a76c9c1",
+        "0x61538d95ae300065453a2d61b21a957ff68d3c72501d0a3ce756e35764f7f595",
 } as const;
 
 // ALP Protocol constants

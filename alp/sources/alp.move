@@ -578,6 +578,11 @@ module alp::alp {
     
     /// Calculate collateral value in USD terms
     fun calculate_collateral_value(amount: u64, price_feed: &PriceFeed): u64 {
+        // Validate price is not zero to prevent division by zero
+        if (price_feed.price == 0) {
+            return 0
+        };
+        
         // Convert collateral amount to USD value using price feed
         // This assumes the price feed gives price in USD with 9 decimal places
         // Use u128 to avoid overflow in intermediate calculation
@@ -597,6 +602,12 @@ module alp::alp {
         };
         
         let collateral_value = calculate_collateral_value(position.collateral_amount, &collateral_config.price_feed);
+        
+        // If collateral value is zero (due to zero price), health factor is zero (immediately liquidatable)
+        if (collateral_value == 0) {
+            return 0
+        };
+        
         // Use u128 to avoid overflow in intermediate calculation
         let collateral_value_u128 = (collateral_value as u128);
         let health_factor_u128 = (collateral_value_u128 * 1_000_000_000) / (position.alp_minted as u128);
@@ -621,10 +632,15 @@ module alp::alp {
         min_ratio: u64,
         liquidation_threshold: u64,
         debt_ceiling: u64,
+        initial_price: u64,
         price_feed_id: vector<u8>,
         ctx: &mut TxContext
     ) {
         assert!(protocol_state.admin == tx_context::sender(ctx), EUnauthorized);
+        assert!(initial_price > 0, EInvalidAmount);
+        assert!(min_ratio >= 1_000_000_000, EInvalidAmount); // At least 100%
+        assert!(liquidation_threshold >= 1_000_000_000, EInvalidAmount); // At least 100%
+        assert!(liquidation_threshold <= min_ratio, EInvalidAmount); // Liquidation threshold should be <= min ratio
         
         let config = CollateralConfig {
             id: object::new(ctx),
@@ -634,8 +650,8 @@ module alp::alp {
             debt_ceiling,
             current_debt: 0,
             price_feed: PriceFeed {
-                price: 0,
-                timestamp: 0,
+                price: initial_price,
+                timestamp: tx_context::epoch_timestamp_ms(ctx),
                 feed_id: price_feed_id,
             },
             active: true,
