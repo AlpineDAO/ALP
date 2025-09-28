@@ -440,10 +440,7 @@ module alp::alp {
         
         // Update protocol state
         protocol_state.total_alp_supply = protocol_state.total_alp_supply - burn_amount;
-        
-        // Calculate and update collateral value
-        let collateral_value = calculate_collateral_value(position.collateral_amount, &collateral_config.price_feed);
-        protocol_state.total_collateral_value = protocol_state.total_collateral_value - collateral_value + collateral_value; // Recalculate
+        collateral_config.current_debt = collateral_config.current_debt - burn_amount;
         
         // Update global collateral ratio
         if (protocol_state.total_alp_supply > 0) {

@@ -158,8 +158,8 @@ export default function App() {
             toast.success(`🎉 Oracle price updated to $${newPrice} USD!`);
             console.log("✅ Oracle price update transaction:", result);
 
-            // Refresh oracle prices and data
-            fetchPrices();
+            // Refresh oracle prices and data immediately
+            await fetchPrices();
             await refreshData();
           },
           onError: (error) => {
@@ -195,9 +195,9 @@ export default function App() {
         return;
       }
 
-      // Calculate liquidation amount (partial liquidation - up to 50% of debt)
+      // Calculate liquidation amount (total liquidation - 100% of debt)
       const debtAmount = position.alpMinted;
-      const maxLiquidationAmount = debtAmount / 2n; // 50% max liquidation
+      const maxLiquidationAmount = debtAmount; // 100% total liquidation
 
       console.log("🔥 Starting liquidation:", {
         positionId: position.id,
@@ -249,6 +249,7 @@ export default function App() {
         arguments: [
           tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
           tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+          tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_VAULT), // Added missing vault parameter!
           tx.object(position.id),
           alpPayment,
           tx.pure.u64(maxLiquidationAmount.toString()),
@@ -264,7 +265,6 @@ export default function App() {
 
             // Refresh all data
             await refreshData();
-            fetchPrices();
           },
           onError: (error) => {
             console.error("❌ Liquidation failed:", error);
@@ -459,6 +459,7 @@ export default function App() {
     calculateAlpDebtUsd,
     getSuiPriceUsd,
     getChfToUsdRate,
+    fetchPrices,
   } = useOracle();
 
   // Calculate total deposited value from user positions using CONTRACT prices
@@ -1722,6 +1723,8 @@ export default function App() {
 
                             await burnAlp(position.id, alpAmount);
                             setAlpAmount("");
+                            // Refresh data to update health factor
+                            await refreshData();
                             toast.success(`Successfully burned ${alpAmount} ALP!`);
                           } catch (error) {
                             console.error("Error burning ALP:", error);
@@ -1802,6 +1805,8 @@ export default function App() {
                               }
 
                               await burnAlp(position.id, debtAmount);
+                              // Refresh data to update health factor
+                              await refreshData();
                               toast.success(`Successfully repaid all ALP debt (${debtAmount} ALP)!`);
                             } catch (error) {
                               console.error("Error repaying ALP debt:", error);
