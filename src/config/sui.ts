@@ -59,10 +59,10 @@ export const TX_CONFIG = {
     gasBudget: 10_000_000, // 0.01 SUI
 } as const;
 
-// Price feed configuration (for demo purposes)
+// Price feed configuration - Real Pyth Network feed IDs
 export const PRICE_FEEDS = {
     SUI: {
-        feedId: "0x50c67b3fd225db8912a424dd4baed60ffdde625ed2feaaf283724f9608fea266", // Pyth SUI/USD feed ID
+        feedId: "0x23d7315113f5b1d3ba7a83604c44b94d79f4fd69af77f804fc7f920a6dc65744", // Real Pyth SUI/USD feed ID
         decimals: 8,
     },
     BTC: {
@@ -72,6 +72,10 @@ export const PRICE_FEEDS = {
     ETH: {
         feedId: "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace", // Pyth ETH/USD feed ID
         decimals: 8,
+    },
+    USD_CHF: {
+        feedId: "0x84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1", // Real Pyth USD/CHF feed ID (we'll convert to CHF/USD)
+        decimals: 5,
     },
 } as const;
 

@@ -68,11 +68,10 @@ export const useALP = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Demo mode for testing (can be toggled via URL parameter or environment)
+    // Demo mode for testing (can be toggled via URL parameter only)
     const isDemoMode =
         typeof window !== "undefined" &&
-        (window.location.search.includes("demo=true") ||
-            process.env.NODE_ENV === "development");
+        window.location.search.includes("demo=true");
 
     // Mock positions for demo mode
     const mockPositions: CollateralPosition[] = [
@@ -90,7 +89,7 @@ export const useALP = () => {
 
     // Fetch protocol state
     const fetchProtocolState = useCallback(async () => {
-        if (!suiClient || CONTRACT_ADDRESSES.PROTOCOL_STATE === "0x0") return;
+        if (!suiClient) return;
 
         try {
             const response = await suiClient.getObject({
@@ -132,7 +131,10 @@ export const useALP = () => {
         }
 
         try {
-            // Query for CollateralPosition objects owned by the user
+            console.log("Fetching positions for:", currentAccount.address);
+            console.log("Looking for contract:", CONTRACT_ADDRESSES.PACKAGE_ID);
+
+            // Query for CollateralPosition objects owned by the user from the current contract only
             const response = await suiClient.getOwnedObjects({
                 owner: currentAccount.address,
                 filter: {
@@ -141,9 +143,23 @@ export const useALP = () => {
                 options: { showContent: true },
             });
 
+            console.log("Raw response:", response);
+
             const positions: CollateralPosition[] = [];
             for (const obj of response.data) {
                 if (obj.data?.content && "fields" in obj.data.content) {
+                    // Verify this is from the current contract package
+                    if (
+                        !obj.data.type?.startsWith(
+                            CONTRACT_ADDRESSES.PACKAGE_ID
+                        )
+                    ) {
+                        console.log(
+                            `Skipping position from old contract: ${obj.data.objectId}`
+                        );
+                        continue;
+                    }
+
                     const fields = obj.data.content.fields as any;
                     const collateralAmount = BigInt(fields.collateral_amount);
                     const alpMinted = BigInt(fields.alp_minted);
@@ -165,6 +181,7 @@ export const useALP = () => {
                 }
             }
 
+            console.log("Final positions:", positions);
             setUserPositions(positions);
         } catch (err) {
             console.error("Error fetching user positions:", err);
@@ -195,10 +212,18 @@ export const useALP = () => {
                 coinType: "0x2::sui::SUI",
             });
 
+            console.log(
+                "SUI coins for address",
+                currentAccount.address,
+                ":",
+                suiCoins.data
+            );
+
             const totalSui = suiCoins.data.reduce(
                 (sum, coin) => sum + BigInt(coin.balance),
                 0n
             );
+            console.log("Total SUI balance:", totalSui.toString());
             setSuiBalance(totalSui);
         } catch (err) {
             console.error("Error fetching balances:", err);
@@ -241,8 +266,8 @@ export const useALP = () => {
                     typeArguments: ["0x2::sui::SUI"],
                     arguments: [
                         tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
-                        tx.object("0x0"), // CollateralConfig object ID - needs to be provided
-                        tx.object("0x0"), // CollateralVault object ID - needs to be provided
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_VAULT),
                         collateralCoin,
                         tx.pure.u64(alpAmountParsed.toString()),
                     ],
@@ -322,8 +347,8 @@ export const useALP = () => {
                     typeArguments: ["0x2::sui::SUI"],
                     arguments: [
                         tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
-                        tx.object("0x0"), // CollateralConfig object ID
-                        tx.object("0x0"), // CollateralVault object ID
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_VAULT),
                         tx.object(positionId),
                         collateralCoin,
                     ],
@@ -389,9 +414,90 @@ export const useALP = () => {
                     target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::mint_alp`,
                     arguments: [
                         tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
-                        tx.object("0x0"), // CollateralConfig object ID
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
                         tx.object(positionId),
                         tx.pure.u64(alpAmountParsed.toString()),
+                    ],
+                });
+
+                return new Promise((resolve, reject) => {
+                    signAndExecuteTransaction(
+                        {
+                            transaction: tx,
+                        },
+                        {
+                            onSuccess: async (result) => {
+                                // Refresh data
+                                await Promise.all([
+                                    fetchProtocolState(),
+                                    fetchUserPositions(),
+                                    fetchUserBalances(),
+                                ]);
+                                resolve(result);
+                            },
+                            onError: (error) => {
+                                reject(error);
+                            },
+                        }
+                    );
+                });
+            } catch (err) {
+                const errorMessage =
+                    err instanceof Error
+                        ? err.message
+                        : "Unknown error occurred";
+                setError(errorMessage);
+                throw err;
+            } finally {
+                setLoading(false);
+            }
+        },
+        [
+            currentAccount,
+            suiClient,
+            fetchProtocolState,
+            fetchUserPositions,
+            fetchUserBalances,
+        ]
+    );
+
+    const burnAlp = useCallback(
+        async (positionId: string, alpAmount: string) => {
+            if (!currentAccount?.address || !suiClient) {
+                throw new Error("Wallet not connected");
+            }
+
+            setLoading(true);
+            setError(null);
+
+            try {
+                const tx = new Transaction();
+                const alpAmountParsed = parseAmount(alpAmount);
+
+                // Get ALP coins to burn
+                const alpCoins = await suiClient.getCoins({
+                    owner: currentAccount.address,
+                    coinType: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::ALP`,
+                });
+
+                if (alpCoins.data.length === 0) {
+                    throw new Error("No ALP coins available to burn");
+                }
+
+                // Split the exact ALP amount to burn
+                const [alpCoin] = tx.splitCoins(
+                    tx.object(alpCoins.data[0].coinObjectId),
+                    [alpAmountParsed]
+                );
+
+                // Call burn_alp function
+                tx.moveCall({
+                    target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::burn_alp`,
+                    arguments: [
+                        tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+                        tx.object(positionId),
+                        alpCoin,
                     ],
                 });
 
@@ -466,6 +572,7 @@ export const useALP = () => {
         createPosition,
         addCollateral,
         mintAlp,
+        burnAlp,
 
         // Utils
         formatAmount,
