@@ -12,6 +12,7 @@ import { useOracle } from "./hooks/useOracle";
 import { formatAmount, parseAmount, CONTRACT_ADDRESSES } from "./config/sui";
 import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
+import toast, { Toaster } from 'react-hot-toast';
 
 const metricsData = [
   {
@@ -928,22 +929,22 @@ export default function App() {
                           });
 
                           if (!currentAccount) {
-                            alert("Please connect your wallet first");
+                            toast.error("Please connect your wallet first");
                             return;
                           }
 
                           if (!collateralAmount) {
-                            alert("Please enter an amount");
+                            toast.error("Please enter an amount");
                             return;
                           }
 
                           if (parseFloat(collateralAmount) <= 0) {
-                            alert("Please enter a valid amount greater than 0");
+                            toast.error("Please enter a valid amount greater than 0");
                             return;
                           }
 
                           if (selectedCollateral === "SUI" && parseFloat(collateralAmount) > parseFloat(formatAmount(suiBalance))) {
-                            alert(`Insufficient SUI balance. Available: ${formatAmount(suiBalance)} SUI`);
+                            toast.error(`Insufficient SUI balance. Available: ${formatAmount(suiBalance)} SUI`);
                             return;
                           }
 
@@ -1051,7 +1052,7 @@ export default function App() {
                                 );
                               });
 
-                              alert(`✅ Position created with ${collateralAmount} SUI deposited!`);
+                              toast.success(`Position created with ${collateralAmount} SUI deposited!`);
                             } else {
                               // Add to existing position - anyone can deposit to prevent liquidation
                               const position = userPositions[0];
@@ -1063,7 +1064,7 @@ export default function App() {
                               });
 
                               await addCollateralDirect(position.id, collateralAmount);
-                              alert(`✅ Successfully added ${collateralAmount} ${selectedCollateral} to position!`);
+                              toast.success(`Successfully added ${collateralAmount} ${selectedCollateral} to position!`);
                             }
 
                             setCollateralAmount("");
@@ -1083,7 +1084,7 @@ export default function App() {
                               errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
                             }
 
-                            alert(`Error depositing collateral: ${errorMessage}`);
+                            toast.error(`Error depositing collateral: ${errorMessage}`);
                           } finally {
                             setIsAddingCollateral(false);
                           }
@@ -1113,12 +1114,12 @@ export default function App() {
                             }
                             onClick={async () => {
                               if (!currentAccount) {
-                                alert("Please connect your wallet first");
+                                toast.error("Please connect your wallet first");
                                 return;
                               }
 
                               if (userPositions.length === 0) {
-                                alert("No position found");
+                                toast.error("No position found");
                                 return;
                               }
 
@@ -1136,7 +1137,7 @@ export default function App() {
 
                               // Validate position ownership for withdrawal
                               if (position.owner !== currentAccount.address) {
-                                alert(`❌ Cannot withdraw: Position belongs to ${position.owner}, but current wallet is ${currentAccount.address}. You can only withdraw from positions you own.`);
+                                toast.error(`Cannot withdraw: Position belongs to ${position.owner}, but current wallet is ${currentAccount.address}. You can only withdraw from positions you own.`);
                                 return;
                               }
 
@@ -1146,21 +1147,21 @@ export default function App() {
                                 if (collateralAmount && parseFloat(collateralAmount) > 0) {
                                   // Partial withdrawal
                                   if (parseFloat(collateralAmount) > parseFloat(formatAmount(position.collateralAmount))) {
-                                    alert(`Cannot withdraw more than available collateral: ${formatAmount(position.collateralAmount)} SUI`);
+                                    toast.error(`Cannot withdraw more than available collateral: ${formatAmount(position.collateralAmount)} SUI`);
                                     return;
                                   }
 
                                   await withdrawPartialCollateral(position.id, collateralAmount);
-                                  alert(`✅ Successfully withdrew ${collateralAmount} SUI!`);
+                                  toast.success(`Successfully withdrew ${collateralAmount} SUI!`);
                                 } else {
                                   // Full withdrawal - only allowed if no debt
                                   if (hasDebt) {
-                                    alert("Cannot withdraw all collateral while you have ALP debt. Please burn your ALP first or specify a withdrawal amount.");
+                                    toast.error("Cannot withdraw all collateral while you have ALP debt. Please burn your ALP first or specify a withdrawal amount.");
                                     return;
                                   }
 
                                   await withdrawAllCollateral(position.id);
-                                  alert(`✅ Successfully withdrew all collateral (${formatAmount(position.collateralAmount)} SUI)!`);
+                                  toast.success(`Successfully withdrew all collateral (${formatAmount(position.collateralAmount)} SUI)!`);
                                 }
 
                                 setCollateralAmount("");
@@ -1175,7 +1176,7 @@ export default function App() {
                                   errorMessage = "Authorization error. Make sure you own this position.";
                                 }
 
-                                alert(`Error withdrawing collateral: ${errorMessage}`);
+                                toast.error(`Error withdrawing collateral: ${errorMessage}`);
                               } finally {
                                 setIsWithdrawing(false);
                               }
@@ -1252,22 +1253,22 @@ export default function App() {
                         }
                         onClick={async () => {
                           if (!currentAccount) {
-                            alert("Please connect your wallet first");
+                            toast.error("Please connect your wallet first");
                             return;
                           }
 
                           if (!alpAmount) {
-                            alert("Please enter an amount to mint");
+                            toast.error("Please enter an amount to mint");
                             return;
                           }
 
                           if (parseFloat(alpAmount) <= 0) {
-                            alert("Please enter a valid amount greater than 0");
+                            toast.error("Please enter a valid amount greater than 0");
                             return;
                           }
 
                           if (userPositions.length === 0) {
-                            alert("No position found. Please create a position first by depositing collateral.");
+                            toast.error("No position found. Please create a position first by depositing collateral.");
                             return;
                           }
 
@@ -1288,7 +1289,7 @@ export default function App() {
 
                             await mintAlp(position.id, alpAmount);
                             setAlpAmount("");
-                            alert(`✅ Successfully minted ${alpAmount} ALP!`);
+                            toast.success(`Successfully minted ${alpAmount} ALP!`);
                           } catch (error) {
                             console.error("Error minting ALP:", error);
 
@@ -1302,7 +1303,7 @@ export default function App() {
                               errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
                             }
 
-                            alert(`Error minting ALP: ${errorMessage}`);
+                            toast.error(`Error minting ALP: ${errorMessage}`);
                           }
                         }}
                       >
@@ -1329,27 +1330,27 @@ export default function App() {
                         }
                         onClick={async () => {
                           if (!currentAccount) {
-                            alert("Please connect your wallet first");
+                            toast.error("Please connect your wallet first");
                             return;
                           }
 
                           if (!alpAmount) {
-                            alert("Please enter an amount to burn");
+                            toast.error("Please enter an amount to burn");
                             return;
                           }
 
                           if (parseFloat(alpAmount) <= 0) {
-                            alert("Please enter a valid amount greater than 0");
+                            toast.error("Please enter a valid amount greater than 0");
                             return;
                           }
 
                           if (userPositions.length === 0) {
-                            alert("No position found. Please create a position first.");
+                            toast.error("No position found. Please create a position first.");
                             return;
                           }
 
                           if (parseFloat(alpAmount) > parseFloat(formatAmount(alpBalance))) {
-                            alert(`Insufficient ALP balance. Available: ${formatAmount(alpBalance)} ALP`);
+                            toast.error(`Insufficient ALP balance. Available: ${formatAmount(alpBalance)} ALP`);
                             return;
                           }
 
@@ -1370,7 +1371,7 @@ export default function App() {
 
                             await burnAlp(position.id, alpAmount);
                             setAlpAmount("");
-                            alert(`✅ Successfully burned ${alpAmount} ALP!`);
+                            toast.success(`Successfully burned ${alpAmount} ALP!`);
                           } catch (error) {
                             console.error("Error burning ALP:", error);
 
@@ -1384,7 +1385,7 @@ export default function App() {
                               errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
                             }
 
-                            alert(`Error burning ALP: ${errorMessage}`);
+                            toast.error(`Error burning ALP: ${errorMessage}`);
                           }
                         }}
                       >
@@ -1415,12 +1416,12 @@ export default function App() {
                           }
                           onClick={async () => {
                             if (!currentAccount) {
-                              alert("Please connect your wallet first");
+                              toast.error("Please connect your wallet first");
                               return;
                             }
 
                             if (userPositions.length === 0) {
-                              alert("No position found");
+                              toast.error("No position found");
                               return;
                             }
 
@@ -1428,12 +1429,12 @@ export default function App() {
                             const debtAmount = formatAmount(position.alpMinted);
 
                             if (position.alpMinted === 0n) {
-                              alert("No ALP debt to repay");
+                              toast.error("No ALP debt to repay");
                               return;
                             }
 
                             if (parseFloat(formatAmount(alpBalance)) < parseFloat(debtAmount)) {
-                              alert(`Insufficient ALP balance. Need: ${debtAmount} ALP, Have: ${formatAmount(alpBalance)} ALP`);
+                              toast.error(`Insufficient ALP balance. Need: ${debtAmount} ALP, Have: ${formatAmount(alpBalance)} ALP`);
                               return;
                             }
 
@@ -1450,7 +1451,7 @@ export default function App() {
                               }
 
                               await burnAlp(position.id, debtAmount);
-                              alert(`✅ Successfully repaid all ALP debt (${debtAmount} ALP)!`);
+                              toast.success(`Successfully repaid all ALP debt (${debtAmount} ALP)!`);
                             } catch (error) {
                               console.error("Error repaying ALP debt:", error);
 
@@ -1464,7 +1465,7 @@ export default function App() {
                                 errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
                               }
 
-                              alert(`Error repaying ALP debt: ${errorMessage}`);
+                              toast.error(`Error repaying ALP debt: ${errorMessage}`);
                             }
                           }}
                         >
@@ -1584,6 +1585,19 @@ export default function App() {
       </main>
 
       <Footer />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#1a1a1a',
+            color: '#00ff00',
+            border: '1px solid #00ff00',
+            fontFamily: 'monospace',
+            fontSize: '12px',
+          },
+        }}
+      />
     </div>
   );
 }
