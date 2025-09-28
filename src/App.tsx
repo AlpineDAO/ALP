@@ -1031,8 +1031,20 @@ export default function App() {
                               alert(`✅ Position created with ${collateralAmount} SUI deposited!`);
                             } else {
                               // Add to existing position
-                              const positionId = userPositions[0].id;
-                              await addCollateralDirect(positionId, collateralAmount);
+                              const position = userPositions[0];
+                              console.log("Adding collateral to existing position:", {
+                                positionId: position.id,
+                                positionOwner: position.owner,
+                                currentWallet: currentAccount.address,
+                                ownerMatch: position.owner === currentAccount.address
+                              });
+
+                              // Validate position ownership
+                              if (position.owner !== currentAccount.address) {
+                                throw new Error(`Position ownership mismatch. Position owner: ${position.owner}, Current wallet: ${currentAccount.address}`);
+                              }
+
+                              await addCollateralDirect(position.id, collateralAmount);
                               alert(`✅ Successfully added ${collateralAmount} ${selectedCollateral} to position!`);
                             }
 
