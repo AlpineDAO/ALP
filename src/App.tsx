@@ -155,11 +155,18 @@ export default function App() {
       }
 
       const amountParsed = parseAmount(amount);
+      const gasReserve = parseAmount("0.01"); // Reserve 0.01 SUI for gas fees
 
-      // Split the exact amount from the coin
-      const [collateralCoin] = tx.splitCoins(tx.object(suiCoins.data[0].coinObjectId), [amountParsed]);
+      // Calculate total SUI balance
+      const totalBalance = suiCoins.data.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
 
-      // Call add_collateral with the exact amount
+      // Check if we have enough SUI (amount + gas reserve)
+      if (totalBalance < amountParsed + gasReserve) {
+        throw new Error(`Insufficient SUI balance. Need ${formatAmount(amountParsed + gasReserve)} SUI (including gas), but only have ${formatAmount(totalBalance)} SUI`);
+      }
+
+      // Use tx.gas which automatically handles gas coin selection and splitting
+      const [collateralCoin] = tx.splitCoins(tx.gas, [amountParsed]);      // Call add_collateral with the exact amount
       tx.moveCall({
         target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::add_collateral`,
         typeArguments: ["0x2::sui::SUI"],
@@ -276,7 +283,7 @@ export default function App() {
         }
         return total;
       }, 0);
-      
+
       return {
         available: Number(formatAmount(suiBalance)),
         locked: totalSuiCollateral,
@@ -294,7 +301,7 @@ export default function App() {
       }
       return total;
     }, 0);
-    
+
     return {
       available: availableSui,
       supplied: suppliedSui,
@@ -877,12 +884,19 @@ export default function App() {
                               }
 
                               const collateralAmountParsed = parseAmount(collateralAmount);
+                              const gasReserve = parseAmount("0.01"); // Reserve 0.01 SUI for gas fees
                               const alpAmount = 1; // No ALP minted, deposit only
 
-                              // Split the exact collateral amount
-                              const [collateralCoin] = tx.splitCoins(tx.object(suiCoins.data[0].coinObjectId), [collateralAmountParsed]);
+                              // Calculate total SUI balance
+                              const totalBalance = suiCoins.data.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
 
-                              // Call create_position with 0 ALP
+                              // Check if we have enough SUI (amount + gas reserve)
+                              if (totalBalance < collateralAmountParsed + gasReserve) {
+                                throw new Error(`Insufficient SUI balance. Need ${formatAmount(collateralAmountParsed + gasReserve)} SUI (including gas), but only have ${formatAmount(totalBalance)} SUI`);
+                              }
+
+                              // Use tx.gas which automatically handles gas coin selection and splitting
+                              const [collateralCoin] = tx.splitCoins(tx.gas, [collateralAmountParsed]);                              // Call create_position with 0 ALP
                               tx.moveCall({
                                 target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::create_position`,
                                 typeArguments: ["0x2::sui::SUI"],
