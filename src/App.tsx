@@ -303,7 +303,8 @@ export default function App() {
   const calculateTotalSuiHoldings = () => {
     const availableSui = Number(formatAmount(suiBalance));
     const suppliedSui = userPositions.reduce((total, position) => {
-      if (position.collateralType === "0x2::sui::SUI") {
+      // Check for both formats: "SUI" (converted from ASCII) and "0x2::sui::SUI" (raw type)
+      if (position.collateralType === "SUI" || position.collateralType === "0x2::sui::SUI") {
         return total + Number(formatAmount(position.collateralAmount));
       }
       return total;
