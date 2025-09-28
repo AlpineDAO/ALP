@@ -56,6 +56,8 @@ export default function App() {
     addCollateral,
     mintAlp,
     burnAlp,
+    withdrawAllCollateral,
+    withdrawPartialCollateral,
     refreshData,
   } = useALP();
 
@@ -64,6 +66,9 @@ export default function App() {
   const [collateralAmount, setCollateralAmount] = useState("");
   const [alpAmount, setAlpAmount] = useState("");
   const [isAddingCollateral, setIsAddingCollateral] = useState(false);
+
+  // State for withdraw functionality
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
 
   // State for address lookup
   const [lookupAddress, setLookupAddress] = useState("");
@@ -892,7 +897,7 @@ export default function App() {
 
                     <div className="flex justify-center space-x-3 mt-2">
                       <button
-                        className="text-xs font-mono px-2 py-2 border border-white bg-white text-background hover:bg-accent/10 hover:text-white transition-colors text-[14px] px-[40px] py-[5px] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="text-xs font-mono px-6 py-2 border border-accent bg-card text-accent hover:bg-accent hover:text-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={
                           !currentAccount ||
                           !collateralAmount ||
@@ -903,6 +908,13 @@ export default function App() {
                         }
                         onClick={async (e) => {
                           e.preventDefault();
+                          console.log("DEPOSIT/CREATE POSITION button clicked");
+                          console.log("Current state:", {
+                            hasAccount: !!currentAccount,
+                            collateralAmount,
+                            userPositionsLength: userPositions.length,
+                            suiBalance: formatAmount(suiBalance)
+                          });
 
                           if (!currentAccount) {
                             alert("Please connect your wallet first");
@@ -1030,7 +1042,7 @@ export default function App() {
 
                               alert(`✅ Position created with ${collateralAmount} SUI deposited!`);
                             } else {
-                              // Add to existing position
+                              // Add to existing position - anyone can deposit to prevent liquidation
                               const position = userPositions[0];
                               console.log("Adding collateral to existing position:", {
                                 positionId: position.id,
@@ -1038,11 +1050,6 @@ export default function App() {
                                 currentWallet: currentAccount.address,
                                 ownerMatch: position.owner === currentAccount.address
                               });
-
-                              // Validate position ownership
-                              if (position.owner !== currentAccount.address) {
-                                throw new Error(`Position ownership mismatch. Position owner: ${position.owner}, Current wallet: ${currentAccount.address}`);
-                              }
 
                               await addCollateralDirect(position.id, collateralAmount);
                               alert(`✅ Successfully added ${collateralAmount} ${selectedCollateral} to position!`);
@@ -1055,10 +1062,14 @@ export default function App() {
                             // Provide more helpful error messages
                             let errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-                            if (errorMessage.includes('No valid gas coins')) {
+                            if (errorMessage.includes('MoveAbort') && errorMessage.includes('6')) {
+                              errorMessage = `Authorization Error: You don't own this position or the protocol is paused. Please create a new position instead or check if you're using the correct wallet.`;
+                            } else if (errorMessage.includes('No valid gas coins')) {
                               errorMessage = `Transaction failed: No valid gas coins found. Please ensure you have sufficient SUI balance (Current: ${formatAmount(suiBalance)} SUI). You need at least 0.1 SUI for gas fees plus the deposit amount.`;
                             } else if (errorMessage.includes('Insufficient SUI balance')) {
                               errorMessage = `${errorMessage}\n\nCurrent wallet balance: ${formatAmount(suiBalance)} SUI\nRequired: ${collateralAmount} SUI + 0.1 SUI (gas fees)`;
+                            } else if (errorMessage.includes('Position ownership mismatch')) {
+                              errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
                             }
 
                             alert(`Error depositing collateral: ${errorMessage}`);
@@ -1072,6 +1083,97 @@ export default function App() {
                           (userPositions.length === 0 ? "CREATE POSITION" : "DEPOSIT")
                         }
                       </button>
+
+                      {/* Withdraw Buttons - Only show if user has positions with collateral */}
+                      {userPositions.length > 0 && userPositions[0].collateralAmount > 0n && (
+                        <>
+
+
+                          {/* Withdraw Button */}
+                          <button
+                            className="text-xs font-mono px-6 py-2 border border-accent bg-card text-accent hover:bg-accent hover:text-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={
+                              !currentAccount ||
+                              loading ||
+                              isWithdrawing ||
+                              userPositions.length === 0 ||
+                              userPositions[0].collateralAmount === 0n ||
+                              (userPositions[0].alpMinted > 0n && !collateralAmount) // If there's debt, require partial withdraw amount
+                            }
+                            onClick={async () => {
+                              if (!currentAccount) {
+                                alert("Please connect your wallet first");
+                                return;
+                              }
+
+                              if (userPositions.length === 0) {
+                                alert("No position found");
+                                return;
+                              }
+
+                              const position = userPositions[0];
+                              const hasDebt = position.alpMinted > 0n;
+
+                              console.log("Attempting withdrawal from position:", {
+                                positionId: position.id,
+                                positionOwner: position.owner,
+                                currentWallet: currentAccount.address,
+                                ownerMatch: position.owner === currentAccount.address,
+                                collateralAmount: formatAmount(position.collateralAmount),
+                                alpDebt: formatAmount(position.alpMinted)
+                              });
+
+                              // Validate position ownership for withdrawal
+                              if (position.owner !== currentAccount.address) {
+                                alert(`❌ Cannot withdraw: Position belongs to ${position.owner}, but current wallet is ${currentAccount.address}. You can only withdraw from positions you own.`);
+                                return;
+                              }
+
+                              try {
+                                setIsWithdrawing(true);
+
+                                if (collateralAmount && parseFloat(collateralAmount) > 0) {
+                                  // Partial withdrawal
+                                  if (parseFloat(collateralAmount) > parseFloat(formatAmount(position.collateralAmount))) {
+                                    alert(`Cannot withdraw more than available collateral: ${formatAmount(position.collateralAmount)} SUI`);
+                                    return;
+                                  }
+
+                                  await withdrawPartialCollateral(position.id, collateralAmount);
+                                  alert(`✅ Successfully withdrew ${collateralAmount} SUI!`);
+                                } else {
+                                  // Full withdrawal - only allowed if no debt
+                                  if (hasDebt) {
+                                    alert("Cannot withdraw all collateral while you have ALP debt. Please burn your ALP first or specify a withdrawal amount.");
+                                    return;
+                                  }
+
+                                  await withdrawAllCollateral(position.id);
+                                  alert(`✅ Successfully withdrew all collateral (${formatAmount(position.collateralAmount)} SUI)!`);
+                                }
+
+                                setCollateralAmount("");
+                              } catch (error) {
+                                console.error("Error withdrawing collateral:", error);
+
+                                let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+                                if (errorMessage.includes('MoveAbort') && errorMessage.includes('1')) {
+                                  errorMessage = "Insufficient collateral ratio. Cannot withdraw - would leave position undercollateralized.";
+                                } else if (errorMessage.includes('MoveAbort') && errorMessage.includes('6')) {
+                                  errorMessage = "Authorization error. Make sure you own this position.";
+                                }
+
+                                alert(`Error withdrawing collateral: ${errorMessage}`);
+                              } finally {
+                                setIsWithdrawing(false);
+                              }
+                            }}
+                          >
+                            {isWithdrawing ? "WITHDRAWING..." : (collateralAmount ? "WITHDRAW" : "WITHDRAW ALL")}
+                          </button>
+                        </>
+                      )}
 
                     </div>
 
@@ -1159,13 +1261,37 @@ export default function App() {
                           }
 
                           try {
-                            const positionId = userPositions[0].id;
-                            await mintAlp(positionId, alpAmount);
+                            const position = userPositions[0];
+                            console.log("Minting ALP from position:", {
+                              positionId: position.id,
+                              positionOwner: position.owner,
+                              currentWallet: currentAccount.address,
+                              ownerMatch: position.owner === currentAccount.address,
+                              alpAmount
+                            });
+
+                            // Validate position ownership
+                            if (position.owner !== currentAccount.address) {
+                              throw new Error(`Position ownership mismatch. Position owner: ${position.owner}, Current wallet: ${currentAccount.address}`);
+                            }
+
+                            await mintAlp(position.id, alpAmount);
                             setAlpAmount("");
                             alert(`✅ Successfully minted ${alpAmount} ALP!`);
                           } catch (error) {
                             console.error("Error minting ALP:", error);
-                            alert(`Error minting ALP: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+                            let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+                            if (errorMessage.includes('MoveAbort') && errorMessage.includes('6')) {
+                              errorMessage = "Authorization Error: You don't own this position or the protocol is paused. Please create a new position with the current wallet.";
+                            } else if (errorMessage.includes('MoveAbort') && errorMessage.includes('1')) {
+                              errorMessage = "Insufficient Collateral: Your position doesn't have enough collateral to mint this amount of ALP. Add more collateral first.";
+                            } else if (errorMessage.includes('Position ownership mismatch')) {
+                              errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
+                            }
+
+                            alert(`Error minting ALP: ${errorMessage}`);
                           }
                         }}
                       >
@@ -1180,6 +1306,15 @@ export default function App() {
                           loading ||
                           userPositions.length === 0 ||
                           parseFloat(alpAmount) > parseFloat(formatAmount(alpBalance))
+                        }
+                        title={
+                          !currentAccount ? "Connect wallet first" :
+                          !alpAmount ? "Enter amount to burn" :
+                          parseFloat(alpAmount) <= 0 ? "Enter valid amount > 0" :
+                          loading ? "Transaction in progress" :
+                          userPositions.length === 0 ? "No positions found - create one first" :
+                          parseFloat(alpAmount) > parseFloat(formatAmount(alpBalance)) ? `Insufficient ALP balance. Available: ${formatAmount(alpBalance)} ALP` :
+                          "Burn ALP tokens"
                         }
                         onClick={async () => {
                           if (!currentAccount) {
@@ -1208,13 +1343,37 @@ export default function App() {
                           }
 
                           try {
-                            const positionId = userPositions[0].id;
-                            await burnAlp(positionId, alpAmount);
+                            const position = userPositions[0];
+                            console.log("Burning ALP from position:", {
+                              positionId: position.id,
+                              positionOwner: position.owner,
+                              currentWallet: currentAccount.address,
+                              ownerMatch: position.owner === currentAccount.address,
+                              alpAmount
+                            });
+
+                            // Validate position ownership
+                            if (position.owner !== currentAccount.address) {
+                              throw new Error(`Position ownership mismatch. Position owner: ${position.owner}, Current wallet: ${currentAccount.address}`);
+                            }
+
+                            await burnAlp(position.id, alpAmount);
                             setAlpAmount("");
                             alert(`✅ Successfully burned ${alpAmount} ALP!`);
                           } catch (error) {
                             console.error("Error burning ALP:", error);
-                            alert(`Error burning ALP: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+                            let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+                            if (errorMessage.includes('MoveAbort') && errorMessage.includes('6')) {
+                              errorMessage = "Authorization Error: You don't own this position or the protocol is paused. Please create a new position with the current wallet.";
+                            } else if (errorMessage.includes('MoveAbort') && errorMessage.includes('2')) {
+                              errorMessage = "Insufficient ALP: You don't have enough ALP tokens to burn this amount.";
+                            } else if (errorMessage.includes('Position ownership mismatch')) {
+                              errorMessage = `${errorMessage}\n\nThis usually means you need to create a new position with the current wallet.`;
+                            }
+
+                            alert(`Error burning ALP: ${errorMessage}`);
                           }
                         }}
                       >

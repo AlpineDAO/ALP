@@ -150,9 +150,12 @@ export const useALP = () => {
             });
 
             console.log("All owned objects:", allObjects.data.length);
-            console.log("Objects with ALP package:", allObjects.data.filter(obj =>
-                obj.data?.type?.includes(CONTRACT_ADDRESSES.PACKAGE_ID)
-            ));
+            console.log(
+                "Objects with ALP package:",
+                allObjects.data.filter((obj) =>
+                    obj.data?.type?.includes(CONTRACT_ADDRESSES.PACKAGE_ID)
+                )
+            );
 
             console.log("Raw response:", response);
 
@@ -164,7 +167,9 @@ export const useALP = () => {
                         objectId: obj.data.objectId,
                         type: obj.data.type,
                         expectedPackage: CONTRACT_ADDRESSES.PACKAGE_ID,
-                        startsWith: obj.data.type?.startsWith(CONTRACT_ADDRESSES.PACKAGE_ID)
+                        startsWith: obj.data.type?.startsWith(
+                            CONTRACT_ADDRESSES.PACKAGE_ID
+                        ),
                     });
 
                     if (
@@ -192,7 +197,7 @@ export const useALP = () => {
                         collateralAmount: collateralAmount.toString(),
                         alpMinted: alpMinted.toString(),
                         collateralType,
-                        rawCollateralType: fields.collateral_type
+                        rawCollateralType: fields.collateral_type,
                     });
 
                     // Calculate collateral ratio (simplified - would need actual price data)
@@ -573,6 +578,144 @@ export const useALP = () => {
         ]
     );
 
+    // Withdraw all collateral from position (requires zero debt)
+    const withdrawAllCollateral = useCallback(
+        async (positionId: string) => {
+            if (!currentAccount?.address || !suiClient) {
+                throw new Error("Wallet not connected");
+            }
+
+            setLoading(true);
+            setError(null);
+
+            try {
+                const tx = new Transaction();
+
+                // Call withdraw_collateral
+                tx.moveCall({
+                    target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::withdraw_collateral`,
+                    typeArguments: ["0x2::sui::SUI"],
+                    arguments: [
+                        tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_VAULT),
+                        tx.object(positionId),
+                    ],
+                });
+
+                return new Promise((resolve, reject) => {
+                    signAndExecuteTransaction(
+                        { transaction: tx },
+                        {
+                            onSuccess: async (result) => {
+                                await Promise.all([
+                                    fetchProtocolState(),
+                                    fetchUserPositions(),
+                                    fetchUserBalances(),
+                                ]);
+                                resolve(result);
+                            },
+                            onError: (error) => {
+                                const errorMessage =
+                                    error?.message ||
+                                    "Failed to withdraw collateral";
+                                setError(errorMessage);
+                                reject(new Error(errorMessage));
+                            },
+                        }
+                    );
+                });
+            } catch (err) {
+                const errorMessage =
+                    err instanceof Error
+                        ? err.message
+                        : "Unknown error occurred";
+                setError(errorMessage);
+                throw err;
+            } finally {
+                setLoading(false);
+            }
+        },
+        [
+            currentAccount,
+            suiClient,
+            signAndExecuteTransaction,
+            fetchProtocolState,
+            fetchUserPositions,
+            fetchUserBalances,
+        ]
+    );
+
+    // Withdraw partial collateral from position
+    const withdrawPartialCollateral = useCallback(
+        async (positionId: string, withdrawAmount: string) => {
+            if (!currentAccount?.address || !suiClient) {
+                throw new Error("Wallet not connected");
+            }
+
+            setLoading(true);
+            setError(null);
+
+            try {
+                const tx = new Transaction();
+                const withdrawAmountParsed = parseAmount(withdrawAmount);
+
+                // Call withdraw_partial_collateral
+                tx.moveCall({
+                    target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::withdraw_partial_collateral`,
+                    typeArguments: ["0x2::sui::SUI"],
+                    arguments: [
+                        tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+                        tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_VAULT),
+                        tx.object(positionId),
+                        tx.pure.u64(withdrawAmountParsed.toString()),
+                    ],
+                });
+
+                return new Promise((resolve, reject) => {
+                    signAndExecuteTransaction(
+                        { transaction: tx },
+                        {
+                            onSuccess: async (result) => {
+                                await Promise.all([
+                                    fetchProtocolState(),
+                                    fetchUserPositions(),
+                                    fetchUserBalances(),
+                                ]);
+                                resolve(result);
+                            },
+                            onError: (error) => {
+                                const errorMessage =
+                                    error?.message ||
+                                    "Failed to withdraw partial collateral";
+                                setError(errorMessage);
+                                reject(new Error(errorMessage));
+                            },
+                        }
+                    );
+                });
+            } catch (err) {
+                const errorMessage =
+                    err instanceof Error
+                        ? err.message
+                        : "Unknown error occurred";
+                setError(errorMessage);
+                throw err;
+            } finally {
+                setLoading(false);
+            }
+        },
+        [
+            currentAccount,
+            suiClient,
+            signAndExecuteTransaction,
+            fetchProtocolState,
+            fetchUserPositions,
+            fetchUserBalances,
+        ]
+    );
+
     // Initialize data fetching
     useEffect(() => {
         if (currentAccount?.address) {
@@ -604,6 +747,8 @@ export const useALP = () => {
         addCollateral,
         mintAlp,
         burnAlp,
+        withdrawAllCollateral,
+        withdrawPartialCollateral,
 
         // Utils
         formatAmount,
