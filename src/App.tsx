@@ -164,7 +164,6 @@ export default function App() {
       }
 
       const amountParsed = parseAmount(amount);
-      const gasReserve = parseAmount("0.01"); // Reserve 0.01 SUI for gas fees
 
       // Use the largest coin and split the exact amount for collateral
       const largestCoin = suiCoins.data.reduce((largest, coin) =>
