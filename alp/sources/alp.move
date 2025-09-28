@@ -9,6 +9,7 @@ module alp::alp {
     use sui::table::{Self, Table};
     use sui::event;
     use std::option::{Self, Option};
+    use sui::url;
 
     // ======== Constants ========
     
@@ -162,7 +163,9 @@ module alp::alp {
             b"ALP",
             b"Alpine Stablecoin",
             b"Algorithmic stablecoin pegged to Swiss Franc (CHF) on Sui",
-            option::none(),
+            option::some(url::new_unsafe_from_bytes(
+                b"https://i.imgur.com/Ch74Whb.png"
+            )),
             ctx
         );
         
@@ -720,8 +723,20 @@ module alp::alp {
         )
     }
 
+    /// Emergency mint for testing/demo (admin only)
+    public entry fun emergency_mint_for_demo(
+        protocol_state: &mut ProtocolState,
+        amount: u64,
+        recipient: address,
+        ctx: &mut TxContext
+    ) {
+        assert!(protocol_state.admin == tx_context::sender(ctx), EUnauthorized);
+        let coins = coin::mint(&mut protocol_state.treasury_cap, amount, ctx);
+        transfer::public_transfer(coins, recipient);
+    }
+
     // ======== Test-only Functions ========
-    
+
     #[test_only]
     /// Initialize for testing
     public fun init_for_testing(ctx: &mut TxContext) {
