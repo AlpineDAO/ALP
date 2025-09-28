@@ -1,3 +1,5 @@
+import { WalletConnection } from "./WalletConnection";
+
 export function Header() {
   return (
     <div className="w-full">
@@ -10,7 +12,7 @@ export function Header() {
           <span className="text-accent">│</span>
           <span className="text-foreground">DOCS</span>
           <span className="text-accent">│</span>
-          <span className="text-foreground">WALLET</span>
+          <WalletConnection />
         </div>
       </nav>
       <div className="w-full h-px bg-accent flex items-center justify-center">

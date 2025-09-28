@@ -12,7 +12,7 @@ export function AsciiDivider({ type = 'single', className = '' }: AsciiDividerPr
 
   return (
     <div className={`w-full flex justify-center py-8 ${className}`}>
-      <div className="text-accent text-sm font-mono">
+      <div className="text-accent text-sm font-mono px-[0px] py-[-84px]">
         {symbols[type]}
       </div>
     </div>
