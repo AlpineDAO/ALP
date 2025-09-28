@@ -9,7 +9,7 @@ import { GlitchAsciiBackground } from "./components/GlitchAsciiBackground";
 import { WalletConnection } from "./components/WalletConnection";
 import { useALP } from "./hooks/useALP";
 import { useOracle } from "./hooks/useOracle";
-import { formatAmount, parseAmount, CONTRACT_ADDRESSES } from "./config/sui";
+import { formatAmount, parseAmount, CONTRACT_ADDRESSES, ALP_CONSTANTS } from "./config/sui";
 import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
 import toast, { Toaster } from 'react-hot-toast';
@@ -60,6 +60,7 @@ export default function App() {
     withdrawAllCollateral,
     withdrawPartialCollateral,
     refreshData,
+    simulatePriceChange,
   } = useALP();
 
   // Shared state for collateral amount and selection
@@ -75,6 +76,232 @@ export default function App() {
   const [lookupAddress, setLookupAddress] = useState("");
   const [lookupResults, setLookupResults] = useState<any[]>([]);
   const [isLookingUp, setIsLookingUp] = useState(false);
+
+  // State for liquidation testing
+  const [simulatedSuiPrice, setSimulatedSuiPrice] = useState("");
+  const [simulationResult, setSimulationResult] = useState<any>(null);
+
+  // State for contract price
+
+  // Calculate collateral value using contract price
+  const calculateCollateralValueUsdFromContract = (collateralAmount: bigint, collateralType: string): number => {
+    if (collateralType === "SUI" || collateralType === "0x2::sui::SUI") {
+      const collateralSui = Number(collateralAmount) / 1_000_000_000; // Convert from lamports
+      return collateralSui * getSuiPriceUsd();
+    }
+    return 0;
+  };
+
+  // Function to fetch and update on-chain contract SUI price
+
+  // Function to actually update the contract oracle price
+  const updateContractOraclePrice = async (newPrice: string) => {
+    if (!currentAccount?.address || !suiClient) {
+      toast.error("Please connect your wallet first");
+      return;
+    }
+
+    if (!newPrice || parseFloat(newPrice) <= 0) {
+      toast.error("Please enter a valid SUI price");
+      return;
+    }
+
+    try {
+      const tx = new Transaction();
+
+      // Convert price to 9-decimal format for the contract
+      const priceInContract = BigInt(Math.floor(parseFloat(newPrice) * 1_000_000_000));
+      const currentTimestamp = Date.now();
+
+      console.log("🔧 Updating contract oracle price:", {
+        newPriceUsd: parseFloat(newPrice),
+        priceInContract: priceInContract.toString(),
+        timestamp: currentTimestamp,
+        currentWallet: currentAccount.address,
+      });
+
+      // Call the simpler update_price_feed function directly
+      tx.moveCall({
+        target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::update_price_feed`,
+        arguments: [
+          tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+          tx.pure.u64(priceInContract.toString()),
+          tx.pure.u64(currentTimestamp.toString()),
+        ],
+      });
+
+      // Get SUI coins for gas payment
+      const suiCoins = await suiClient.getCoins({
+        owner: currentAccount.address,
+        coinType: "0x2::sui::SUI",
+      });
+
+      if (suiCoins.data.length === 0) {
+        throw new Error("No SUI coins found for gas payment");
+      }
+
+      // Use the largest coin for gas
+      const gasCoin = suiCoins.data.reduce((largest, current) =>
+        BigInt(current.balance) > BigInt(largest.balance) ? current : largest
+      );
+
+      tx.setGasPayment([{
+        objectId: gasCoin.coinObjectId,
+        version: gasCoin.version,
+        digest: gasCoin.digest
+      }]);
+
+      signAndExecuteTransaction(
+        { transaction: tx },
+        {
+          onSuccess: async (result) => {
+            toast.success(`🎉 Oracle price updated to $${newPrice} USD!`);
+            console.log("✅ Oracle price update transaction:", result);
+
+            // Refresh oracle prices and data
+            fetchPrices();
+            await refreshData();
+          },
+          onError: (error) => {
+            console.error("❌ Oracle price update failed:", error);
+            toast.error(`Failed to update oracle price: ${error.message || 'Unknown error'}`);
+          },
+        }
+      );
+    } catch (error) {
+      console.error("❌ Error in oracle price update:", error);
+      toast.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // Function to liquidate a position
+  const liquidatePosition = async (position: any) => {
+    if (!currentAccount?.address || !suiClient) {
+      toast.error("Please connect your wallet first");
+      return;
+    }
+
+    try {
+      const tx = new Transaction();
+
+      // Get ALP coins for payment (liquidator needs to provide ALP to burn the debt)
+      const alpCoins = await suiClient.getCoins({
+        owner: currentAccount.address,
+        coinType: CONTRACT_ADDRESSES.ALP_COIN_TYPE,
+      });
+
+      if (alpCoins.data.length === 0) {
+        toast.error("No ALP coins found. You need ALP to liquidate positions.");
+        return;
+      }
+
+      // Calculate liquidation amount (partial liquidation - up to 50% of debt)
+      const debtAmount = position.alpMinted;
+      const maxLiquidationAmount = debtAmount / 2n; // 50% max liquidation
+
+      console.log("🔥 Starting liquidation:", {
+        positionId: position.id,
+        debtAmount: debtAmount.toString(),
+        maxLiquidationAmount: maxLiquidationAmount.toString(),
+        liquidator: currentAccount.address,
+      });
+
+      // Get SUI coins for gas payment
+      const suiCoins = await suiClient.getCoins({
+        owner: currentAccount.address,
+        coinType: "0x2::sui::SUI",
+      });
+
+      if (suiCoins.data.length === 0) {
+        throw new Error("No SUI coins found for gas payment");
+      }
+
+      // Use the largest coin for gas
+      const gasCoin = suiCoins.data.reduce((largest, current) =>
+        BigInt(current.balance) > BigInt(largest.balance) ? current : largest
+      );
+
+      tx.setGasPayment([{
+        objectId: gasCoin.coinObjectId,
+        version: gasCoin.version,
+        digest: gasCoin.digest
+      }]);
+
+      // Merge all ALP coins and split the required amount
+      if (alpCoins.data.length > 1) {
+        const [primaryCoin, ...otherCoins] = alpCoins.data;
+        tx.mergeCoins(
+          tx.object(primaryCoin.coinObjectId),
+          otherCoins.map(coin => tx.object(coin.coinObjectId))
+        );
+      }
+
+      // Split the exact amount needed for liquidation
+      const [alpPayment] = tx.splitCoins(
+        tx.object(alpCoins.data[0].coinObjectId),
+        [maxLiquidationAmount]
+      );
+
+      // Call the liquidation function
+      tx.moveCall({
+        target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::liquidation::liquidate_position`,
+        typeArguments: ["0x2::sui::SUI"], // For SUI collateral
+        arguments: [
+          tx.object(CONTRACT_ADDRESSES.PROTOCOL_STATE),
+          tx.object(CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG),
+          tx.object(position.id),
+          alpPayment,
+          tx.pure.u64(maxLiquidationAmount.toString()),
+        ],
+      });
+
+      signAndExecuteTransaction(
+        { transaction: tx },
+        {
+          onSuccess: async (result) => {
+            toast.success("🔥 Position liquidated successfully!");
+            console.log("✅ Liquidation transaction:", result);
+
+            // Refresh all data
+            await refreshData();
+            fetchPrices();
+          },
+          onError: (error) => {
+            console.error("❌ Liquidation failed:", error);
+            toast.error(`Liquidation failed: ${error.message || 'Unknown error'}`);
+          },
+        }
+      );
+    } catch (error) {
+      console.error("❌ Error in liquidation:", error);
+      toast.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // Function to handle price simulation
+  const handlePriceSimulation = () => {
+    if (!simulatedSuiPrice || parseFloat(simulatedSuiPrice) <= 0) {
+      toast.error("Please enter a valid SUI price");
+      return;
+    }
+
+    console.log("🎮 Starting price simulation with:", {
+      simulatedPrice: parseFloat(simulatedSuiPrice),
+      contractPrice: getSuiPriceUsd(),
+      userPositions: userPositions.length
+    });
+
+    const result = simulatePriceChange(parseFloat(simulatedSuiPrice));
+    setSimulationResult(result);
+
+    console.log("🎮 Simulation result:", result);
+
+    if (result.isLiquidatable) {
+      toast.error(`⚠️ Position would be liquidatable at $${simulatedSuiPrice}!`);
+    } else {
+      toast.success(`✅ Position would be safe at $${simulatedSuiPrice}`);
+    }
+  };
 
   // Function to check collateral for any address
   const checkAddressCollateral = async (address: string) => {
@@ -234,10 +461,10 @@ export default function App() {
     getChfToUsdRate,
   } = useOracle();
 
-  // Calculate total deposited value from user positions using real oracle prices
+  // Calculate total deposited value from user positions using CONTRACT prices
   const totalDepositedValue = userPositions.reduce((total, position) => {
-    // Use real oracle price data
-    const usdValue = calculateCollateralValueUsd(position.collateralAmount, position.collateralType);
+    // Use contract price data instead of external oracle
+    const usdValue = calculateCollateralValueUsdFromContract(position.collateralAmount, position.collateralType);
     return total + usdValue;
   }, 0);
 
@@ -253,15 +480,31 @@ export default function App() {
     return total + debtUsd;
   }, 0);
 
-  // Calculate overall health factor using real oracle prices
+  // Calculate overall health factor using CONTRACT prices
   const calculateHealthFactor = () => {
-    if (userPositions.length === 0 || totalAlpDebtUsd === 0) return 2.0;
+    if (userPositions.length === 0) {
+      console.log("No positions found, returning default health factor 2.0");
+      return 2.0;
+    }
+    if (totalAlpDebtUsd === 0) {
+      console.log("No ALP debt found, health factor should be infinite/safe");
+      return 999; // Very high number to indicate no debt
+    }
 
-    // Health Factor = (Collateral Value USD * Liquidation Threshold) / ALP Debt USD
-    // Both values are now calculated using real oracle prices
-    const liquidationThreshold = 0.80; // 80% liquidation threshold (120% collateral ratio)
+    // Health Factor = Collateral Value USD / (ALP Debt USD * Liquidation Threshold)
+    // Using protocol constants: 120% liquidation threshold and CONTRACT PRICES
+    const liquidationThreshold = ALP_CONSTANTS.LIQUIDATION_THRESHOLD / 1_000_000_000; // 1.2 (120%)
 
-    const healthFactor = (totalDepositedValue * liquidationThreshold) / totalAlpDebtUsd;
+    const healthFactor = totalDepositedValue / (totalAlpDebtUsd * liquidationThreshold);
+
+    console.log("🏥 Health Factor calculation (CONTRACT PRICE):", {
+      totalCollateralUsd: totalDepositedValue,
+      totalDebtUsd: totalAlpDebtUsd,
+      contractSuiPrice: getSuiPriceUsd(),
+      liquidationThreshold,
+      healthFactor,
+      isHealthy: healthFactor >= 1.0
+    });
 
     return healthFactor;
   };
@@ -337,9 +580,9 @@ export default function App() {
 
   // Calculate maximum safe ALP amount based on collateral and health factor
   const calculateMaxSafeAlpAmount = (collateralAmountSui: string): string => {
-    if (!collateralAmountSui || parseFloat(collateralAmountSui) <= 0) return "0";
+    if (!collateralAmountSui || parseFloat(collateralAmountSui) <= 0 || getSuiPriceUsd() === 0) return "0";
 
-    // Get current SUI price in USD
+    // Use contract SUI price (not external oracle)
     const suiPriceUsd = getSuiPriceUsd();
     const chfToUsdRate = getChfToUsdRate();
 
@@ -356,19 +599,49 @@ export default function App() {
     return maxAlpAmount.toFixed(6);
   };
 
+  // State for on-chain collateral config data
+  const [collateralConfig, setCollateralConfig] = useState<any>(null);
+
+  // Fetch collateral config on component mount
+  useEffect(() => {
+    const fetchCollateralConfig = async () => {
+      if (!suiClient) return;
+
+      try {
+        const config = await suiClient.getObject({
+          id: CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG,
+          options: { showContent: true }
+        });
+        setCollateralConfig(config.data);
+      } catch (error) {
+        console.error("Failed to fetch collateral config:", error);
+      }
+    };
+
+    fetchCollateralConfig();
+    // Oracle prices are automatically fetched by useOracle hook
+  }, [suiClient]);
+
   // Calculate maximum additional ALP for existing position
   const calculateMaxAdditionalAlp = (): string => {
-    if (userPositions.length === 0) return "0";
+    if (userPositions.length === 0 || !collateralConfig || getSuiPriceUsd() === 0) return "0";
 
-    const position = userPositions[0];
+    console.log("🔍 ALL USER POSITIONS:", userPositions);
+    console.log("📊 Total positions count:", userPositions.length);
+
+    // Find the position with the highest collateral (most likely the main one)
+    const position = userPositions.reduce((largest, current) =>
+      current.collateralAmount > largest.collateralAmount ? current : largest
+    );
     const currentCollateralSui = Number(formatAmount(position.collateralAmount));
 
-    // Get current SUI price in USD
+    // Use contract SUI price (not external oracle)
     const suiPriceUsd = getSuiPriceUsd();
     const chfToUsdRate = getChfToUsdRate();
 
-    // Calculate total collateral value in CHF
+    // Calculate total collateral value in USD (using contract price)
     const totalCollateralValueUsd = currentCollateralSui * suiPriceUsd;
+    // Convert USD to CHF for ALP calculation (ALP is pegged to CHF)
     const totalCollateralValueChf = totalCollateralValueUsd / chfToUsdRate;
 
     // Calculate current ALP debt
@@ -377,10 +650,38 @@ export default function App() {
     // Calculate max total ALP based on 150% ratio
     const maxTotalAlp = totalCollateralValueChf / 1.5;
 
-    // Calculate additional ALP we can mint
-    const additionalAlp = Math.max(0, maxTotalAlp - currentAlpDebt);
+    // Calculate additional ALP we can mint based on collateral
+    const additionalAlpFromCollateral = Math.max(0, maxTotalAlp - currentAlpDebt);
 
-    return additionalAlp.toFixed(6);
+    // Get actual debt ceiling and current debt from on-chain collateral config
+    const debtCeilingRaw = collateralConfig?.content?.fields?.debt_ceiling || "0";
+    const currentDebtRaw = collateralConfig?.content?.fields?.current_debt || "0";
+
+    const debtCeiling = Number(formatAmount(BigInt(debtCeilingRaw)));
+    const currentTotalDebt = Number(formatAmount(BigInt(currentDebtRaw)));
+    const availableDebtCapacity = Math.max(0, debtCeiling - currentTotalDebt);
+
+    // Take the minimum of collateral-based limit and debt ceiling limit
+    const maxAdditional = Math.min(additionalAlpFromCollateral, availableDebtCapacity);
+
+    console.log("🔍 DEBUGGING Max ALP calculation:");
+    console.log("📍 Position data:", position);
+    console.log("💰 Raw collateral amount:", position.collateralAmount);
+    console.log("💰 Formatted collateral SUI:", currentCollateralSui);
+    console.log("📊 Raw ALP minted:", position.alpMinted);
+    console.log("📊 Formatted ALP debt:", currentAlpDebt);
+    console.log("💵 SUI price USD:", suiPriceUsd);
+    console.log("💵 CHF to USD rate:", chfToUsdRate);
+    console.log("📈 Total collateral USD:", totalCollateralValueUsd);
+    console.log("📈 Total collateral CHF:", totalCollateralValueChf);
+    console.log("🎯 Max total ALP (150% ratio):", maxTotalAlp);
+    console.log("➕ Additional from collateral:", additionalAlpFromCollateral);
+    console.log("🏦 Debt ceiling:", debtCeiling);
+    console.log("🏦 Current total debt:", currentTotalDebt);
+    console.log("🏦 Available debt capacity:", availableDebtCapacity);
+    console.log("✅ Final max additional:", maxAdditional);
+
+    return maxAdditional.toFixed(6);
   };
 
   return (
@@ -723,6 +1024,22 @@ export default function App() {
                     >
                       {status.symbol} {status.status}
                     </div>
+
+                    {/* Liquidation Button - Show only for unhealthy positions */}
+                    {actualHealthFactor < 1.2 && userPositions.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-red-500/20">
+                        <button
+                          onClick={() => liquidatePosition(userPositions[0])}
+                          disabled={loading}
+                          className="w-full px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-sm border border-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          🔥 LIQUIDATE POSITION
+                        </button>
+                        <div className="text-xs text-red-400 mt-2 text-center font-mono">
+                          Health Factor &lt; 1.2 - Position can be liquidated
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -1230,12 +1547,46 @@ export default function App() {
                           CHF
                         </div>
                         {userPositions.length > 0 && (
-                          <button
-                            onClick={() => setAlpAmount(calculateMaxAdditionalAlp())}
-                            className="text-accent text-xs font-mono hover:text-white transition-colors"
-                          >
-                            [MAX]
-                          </button>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => setAlpAmount("0.01")}
+                              className="text-accent text-xs font-mono hover:text-white transition-colors"
+                            >
+                              [TEST]
+                            </button>
+                            <button
+                              onClick={async () => {
+                                // Check on-chain collateral config and price feed
+                                try {
+                                  const collateralConfig = await suiClient.getObject({
+                                    id: CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG,
+                                    options: { showContent: true }
+                                  });
+                                  console.log("On-chain SUI Collateral Config:", collateralConfig);
+
+                                  // Also check position details
+                                  if (userPositions.length > 0) {
+                                    const position = await suiClient.getObject({
+                                      id: userPositions[0].id,
+                                      options: { showContent: true }
+                                    });
+                                    console.log("On-chain Position Details:", position);
+                                  }
+                                } catch (error) {
+                                  console.error("Error checking on-chain data:", error);
+                                }
+                              }}
+                              className="text-accent text-xs font-mono hover:text-white transition-colors"
+                            >
+                              [CHECK]
+                            </button>
+                            <button
+                              onClick={() => setAlpAmount(calculateMaxAdditionalAlp())}
+                              className="text-accent text-xs font-mono hover:text-white transition-colors"
+                            >
+                              [MAX]
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1478,6 +1829,174 @@ export default function App() {
               );
             })()}
           </section>
+
+          <AsciiDivider />
+
+          {/* Liquidation Testing Section */}
+          {userPositions.length > 0 && (
+            <section className="space-y-8">
+              <h2 className="text-center text-foreground">
+                LIQUIDATION TESTING
+              </h2>
+              <div className="text-center text-sm text-foreground opacity-75 mb-6">
+                Simulate SUI price changes to test liquidation scenarios
+              </div>
+
+              <div className="max-w-2xl mx-auto border border-accent p-6 bg-card">
+                <div className="space-y-6">
+                  {/* Current Position Info */}
+                  <div className="text-center space-y-2">
+                    <div className="text-accent text-sm font-mono">CURRENT POSITION</div>
+                    <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                      <div>
+                        <div className="text-foreground opacity-75">Collateral:</div>
+                        <div className="text-white">
+                          {formatAmount(userPositions[0].collateralAmount)} SUI
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-foreground opacity-75">ALP Debt:</div>
+                        <div className="text-white">
+                          {formatAmount(userPositions[0].alpMinted)} ALP
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Current Price Display */}
+                  <div className="text-center space-y-2 border-b border-accent pb-4">
+                    <div className="text-accent text-xs font-mono">CONTRACT SUI PRICE</div>
+                    <div className="text-white font-mono text-lg">
+                      ${getSuiPriceUsd() > 0 ? getSuiPriceUsd().toFixed(4) : "Loading..."}
+                    </div>
+                    <div className="text-foreground opacity-75 text-xs">
+                      This is the actual price used by the smart contract
+                    </div>
+                    <div className="text-foreground opacity-50 text-xs">
+                      (Different from external oracle: ${prices.sui?.price.toFixed(4) || "N/A"})
+                    </div>
+                  </div>
+
+                  {/* Price Simulation Input */}
+                  <div className="space-y-4">
+                    <div className="text-accent text-sm font-mono text-center">
+                      SIMULATE SUI PRICE
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex space-x-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="Enter SUI price (USD)"
+                          value={simulatedSuiPrice}
+                          onChange={(e) => setSimulatedSuiPrice(e.target.value)}
+                          className="flex-1 bg-background border border-accent text-foreground px-3 py-2 text-sm font-mono focus:outline-none focus:border-white"
+                        />
+                        <AsciiButton
+                          onClick={handlePriceSimulation}
+                          disabled={!simulatedSuiPrice || parseFloat(simulatedSuiPrice) <= 0}
+                        >
+                          SIMULATE
+                        </AsciiButton>
+                      </div>
+
+                      {/* Update Contract Price Button */}
+                      <div className="text-center">
+                        <button
+                          onClick={() => updateContractOraclePrice(simulatedSuiPrice)}
+                          disabled={!simulatedSuiPrice || parseFloat(simulatedSuiPrice) <= 0 || !currentAccount}
+                          className="text-xs px-4 py-2 border border-yellow-500 text-yellow-500 hover:bg-yellow-500 hover:text-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-mono"
+                        >
+                          🔧 UPDATE CONTRACT PRICE
+                        </button>
+                        <div className="text-xs text-foreground opacity-50 mt-1">
+                          ⚠️ Requires admin access
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick preset buttons */}
+                    {userPositions.length > 0 && userPositions[0].alpMinted > 0n && (
+                      <div className="space-y-2">
+                        <div className="text-accent text-xs font-mono text-center">QUICK TESTS</div>
+                        <div className="flex space-x-2 justify-center">
+                          <button
+                            onClick={() => {
+                              const position = userPositions[0];
+                              const liquidationPrice = position.alpMinted > 0n
+                                ? Number(position.alpMinted * 1_200_000_000n) / Number(position.collateralAmount * 1_000_000_000n)
+                                : 0;
+                              setSimulatedSuiPrice(liquidationPrice.toFixed(4));
+                            }}
+                            className="text-xs px-2 py-1 border border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-background transition-colors"
+                          >
+                            LIQUIDATION PRICE
+                          </button>
+                          <button
+                            onClick={() => {
+                              const position = userPositions[0];
+                              const liquidationPrice = position.alpMinted > 0n
+                                ? Number(position.alpMinted * 1_200_000_000n) / Number(position.collateralAmount * 1_000_000_000n)
+                                : 0;
+                              setSimulatedSuiPrice((liquidationPrice * 0.9).toFixed(4));
+                            }}
+                            className="text-xs px-2 py-1 border border-red-400 text-red-400 hover:bg-red-400 hover:text-background transition-colors"
+                          >
+                            -10% CRASH
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Simulation Results */}
+                  {simulationResult && (
+                    <div className="space-y-4 border-t border-accent pt-4">
+                      <div className="text-accent text-sm font-mono text-center">
+                        SIMULATION RESULTS
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                        <div>
+                          <div className="text-foreground opacity-75">New Collateral Value:</div>
+                          <div className="text-white">
+                            ${simulationResult.collateralValue.toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-foreground opacity-75">Health Factor:</div>
+                          <div className={`${simulationResult.isLiquidatable ? 'text-red-400' : 'text-green-400'}`}>
+                            {simulationResult.healthFactor.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-center">
+                        <div className={`text-sm font-mono px-4 py-2 border ${
+                          simulationResult.isLiquidatable
+                            ? 'border-red-400 text-red-400 bg-red-400/10'
+                            : 'border-green-400 text-green-400 bg-green-400/10'
+                        }`}>
+                          {simulationResult.isLiquidatable
+                            ? '⚠️ LIQUIDATABLE'
+                            : '✅ SAFE'
+                          }
+                        </div>
+                      </div>
+
+                      {simulationResult.liquidationPrice > 0 && (
+                        <div className="text-center text-xs font-mono">
+                          <div className="text-foreground opacity-75">Liquidation Price:</div>
+                          <div className="text-yellow-400">
+                            ${simulationResult.liquidationPrice.toFixed(4)} USD
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* Metrics Section */}
           <section className="space-y-8">

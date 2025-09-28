@@ -109,7 +109,9 @@ export const parseAmount = (
     amount: string,
     decimals: number = ALP_CONSTANTS.DECIMALS
 ): bigint => {
-    const [whole, fractional = ""] = amount.split(".");
+    // Handle both comma and dot as decimal separators
+    const normalizedAmount = amount.replace(",", ".");
+    const [whole, fractional = ""] = normalizedAmount.split(".");
     const wholeBigInt = BigInt(whole || "0");
     const fractionalPadded = fractional
         .padEnd(decimals, "0")

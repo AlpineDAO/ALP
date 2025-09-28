@@ -198,18 +198,18 @@ export const useOracle = () => {
         setError(null);
 
         try {
-            // Fetch real-time SUI price from Pyth Network
-            const suiPythPrice = await fetchPythPrice(PRICE_FEEDS.SUI.feedId);
+            // Prioritize contract price over external Pyth price
+            const suiContractPrice = await fetchCollateralPrice(
+                CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG
+            );
 
-            // Fallback to contract price if Pyth fails
-            const suiContractPrice = suiPythPrice
+            // Fallback to Pyth price if contract price fails
+            const suiPythPrice = suiContractPrice
                 ? null
-                : await fetchCollateralPrice(
-                      CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG
-                  );
+                : await fetchPythPrice(PRICE_FEEDS.SUI.feedId);
 
-            // Use Pyth price if available, otherwise fallback to contract
-            const suiPrice = suiPythPrice || suiContractPrice;
+            // Use contract price if available, otherwise fallback to Pyth
+            const suiPrice = suiContractPrice || suiPythPrice;
 
             // Fetch CHF/USD rate
             const chfPrice = await fetchChfUsdRate();
@@ -220,8 +220,8 @@ export const useOracle = () => {
             });
 
             // Log the source of data for debugging
-            console.log("Price sources:", {
-                sui: suiPythPrice ? "Pyth Network (LIVE)" : "Contract (STALE)",
+            console.log("🔍 Price sources:", {
+                sui: suiContractPrice ? "Contract (PRIMARY)" : "Pyth Network (FALLBACK)",
                 chf:
                     chfPrice?.isStale === false
                         ? "Pyth Network (LIVE)"
@@ -234,6 +234,10 @@ export const useOracle = () => {
                     sui: new Date(suiPrice?.publishTime || 0).toLocaleString(),
                     chf: new Date(chfPrice?.publishTime || 0).toLocaleString(),
                 },
+                staleness: {
+                    sui: suiPrice?.isStale,
+                    chf: chfPrice?.isStale,
+                }
             });
         } catch (err) {
             const errorMessage =
@@ -257,15 +261,17 @@ export const useOracle = () => {
         }
     }, [suiClient, fetchPrices]);
 
-    // Helper function to get SUI price in USD
+    // Helper function to get SUI price in USD - prioritize contract price
     const getSuiPriceUsd = useCallback((): number => {
-        if (prices.sui && !prices.sui.isStale) {
+        // Always try to use the most recent price data available
+        if (prices.sui) {
+            console.log("🔍 Using SUI price from oracle:", prices.sui.price, "stale:", prices.sui.isStale);
             return prices.sui.price;
         }
 
-        // Fallback to a reasonable default if oracle data is stale or unavailable
+        // Fallback to a reasonable default if oracle data is unavailable
         console.warn(
-            "Using fallback SUI price - oracle data unavailable or stale"
+            "Using fallback SUI price - oracle data unavailable"
         );
         return 1.85; // Fallback SUI price
     }, [prices.sui]);

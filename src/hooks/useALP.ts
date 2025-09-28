@@ -445,7 +445,37 @@ export const useALP = () => {
                 const tx = new Transaction();
                 const alpAmountParsed = parseAmount(alpAmount);
 
+                // Get SUI coins for gas
+                const suiCoins = await suiClient.getCoins({
+                    owner: currentAccount.address,
+                    coinType: "0x2::sui::SUI",
+                });
+
+                if (suiCoins.data.length === 0) {
+                    throw new Error("No SUI coins available for gas");
+                }
+
+                // Set gas payment with the largest SUI coin
+                const largestSuiCoin = suiCoins.data.reduce((largest, coin) =>
+                    BigInt(coin.balance) > BigInt(largest.balance) ? coin : largest
+                );
+
+                tx.setGasPayment([{
+                    objectId: largestSuiCoin.coinObjectId,
+                    version: largestSuiCoin.version,
+                    digest: largestSuiCoin.digest
+                }]);
+
                 // Call mint_alp function
+                console.log("Building mint_alp transaction with:", {
+                    packageId: CONTRACT_ADDRESSES.PACKAGE_ID,
+                    protocolState: CONTRACT_ADDRESSES.PROTOCOL_STATE,
+                    collateralConfig: CONTRACT_ADDRESSES.SUI_COLLATERAL_CONFIG,
+                    positionId,
+                    alpAmountParsed: alpAmountParsed.toString(),
+                    originalAmount: alpAmount
+                });
+
                 tx.moveCall({
                     target: `${CONTRACT_ADDRESSES.PACKAGE_ID}::alp::mint_alp`,
                     arguments: [
@@ -455,6 +485,8 @@ export const useALP = () => {
                         tx.pure.u64(alpAmountParsed.toString()),
                     ],
                 });
+
+                console.log("Transaction built, attempting to sign and execute...");
 
                 return new Promise((resolve, reject) => {
                     signAndExecuteTransaction(
@@ -764,6 +796,59 @@ export const useALP = () => {
         fetchUserBalances,
     ]);
 
+    // Price simulation for liquidation testing
+    const simulatePriceChange = useCallback(
+        (newSuiPriceUsd: number) => {
+            if (userPositions.length === 0) {
+                return {
+                    healthFactor: 0,
+                    collateralValue: 0,
+                    isLiquidatable: false,
+                    liquidationPrice: 0,
+                };
+            }
+
+            // Get the largest position (most likely the main one)
+            const position = userPositions.reduce((largest, current) =>
+                current.collateralAmount > largest.collateralAmount ? current : largest
+            );
+
+            // Calculate new collateral value with simulated price (both in USD)
+            const collateralSui = Number(position.collateralAmount) / 1_000_000_000; // Convert from lamports
+            const newCollateralValueUsd = collateralSui * newSuiPriceUsd;
+
+            // Calculate health factor (collateral USD / debt USD)
+            // ALP is pegged to CHF, so we need to convert ALP to USD using CHF rate
+            const alpDebt = Number(position.alpMinted) / 1_000_000_000; // Convert from lamports
+
+            // For health factor, we can use a simple 1:1 ratio if no debt
+            const healthFactor = position.alpMinted > 0n
+                ? newCollateralValueUsd / alpDebt // Simplified: treating ALP ≈ USD for simulation
+                : Number.MAX_SAFE_INTEGER;
+
+            // Check if position would be liquidatable (below 120% = 1.2)
+            const isLiquidatable = position.alpMinted > 0n && healthFactor < 1.2;
+
+            // Calculate exact liquidation price (price at which health factor = 1.2)
+            const liquidationPrice = position.alpMinted > 0n
+                ? (alpDebt * 1.2) / collateralSui
+                : 0;
+
+            return {
+                healthFactor,
+                collateralValue: newCollateralValueUsd,
+                isLiquidatable,
+                liquidationPrice,
+                currentPrice: newSuiPriceUsd,
+                position: {
+                    collateralAmount: collateralSui,
+                    alpDebt: alpDebt,
+                }
+            };
+        },
+        [userPositions]
+    );
+
     return {
         // State
         protocolState,
@@ -786,6 +871,7 @@ export const useALP = () => {
         formatAmount,
         parseAmount,
         calculateCollateralRatio,
+        simulatePriceChange,
 
         // Refresh functions
         refreshData: () =>
