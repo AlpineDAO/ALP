@@ -6,9 +6,9 @@ module alp::liquidation {
     use sui::transfer;
     use sui::event;
     use sui::coin::{Self, Coin};
-    use sui::balance::{Self, Balance};
+    use sui::balance;
     use std::vector;
-    use alp::alp::{Self, ALP, CollateralPosition, CollateralConfig, ProtocolState};
+    use alp::alp::{Self, ALP, CollateralPosition, CollateralConfig, ProtocolState, CollateralVault};
 
     // ======== Constants ========
     
@@ -79,6 +79,7 @@ module alp::liquidation {
     public entry fun liquidate_position<T>(
         protocol_state: &mut ProtocolState,
         collateral_config: &mut CollateralConfig,
+        vault: &mut CollateralVault<T>,
         position: &mut CollateralPosition,
         mut alp_payment: Coin<ALP>,
         max_liquidation_amount: u64,
@@ -128,17 +129,35 @@ module alp::liquidation {
         let protocol_fee = (((collateral_to_liquidate as u128) * (PROTOCOL_LIQUIDATION_FEE as u128)) / 1_000_000_000u128 as u64);
         let _net_collateral_liquidated = collateral_to_liquidate - liquidator_reward - protocol_fee;
         
-        // Burn the ALP tokens used for liquidation
+        // 1. Burn the ALP tokens used for liquidation
         let alp_to_burn = coin::split(&mut alp_payment, liquidation_amount, ctx);
-        alp::burn_alp(protocol_state, collateral_config, position, alp_to_burn, ctx);
+        alp::burn_alp_liquidation(protocol_state, collateral_config, position, alp_to_burn, ctx);
         
-        // Update position (reduce collateral)
-        let (current_collateral, current_debt, _last_update, _accumulated_fee) = alp::get_position_info(position);
-        let new_collateral = current_collateral - collateral_to_liquidate;
-        let new_debt = current_debt - liquidation_amount;
-
-        // Note: Position update would need to be handled by the main alp module
-        // as the CollateralPosition struct fields are private
+        // 2. Withdraw collateral from vault for liquidation
+        let mut total_collateral_withdrawn = balance::split(alp::get_vault_balance_mut(vault), collateral_to_liquidate);
+        
+        // 3. Split collateral into liquidator reward, protocol fee, and net liquidated amount
+        let liquidator_reward_balance = balance::split(&mut total_collateral_withdrawn, liquidator_reward);
+        let protocol_fee_balance = balance::split(&mut total_collateral_withdrawn, protocol_fee);
+        // Remaining balance is the net liquidated collateral
+        
+        // 4. Convert balances to coins and transfer
+        let mut liquidator_reward_coin = coin::from_balance<T>(liquidator_reward_balance, ctx);
+        let net_liquidated_coin = coin::from_balance<T>(total_collateral_withdrawn, ctx);
+        
+        // Transfer liquidator reward + net collateral to liquidator
+        coin::join(&mut liquidator_reward_coin, net_liquidated_coin);
+        transfer::public_transfer(liquidator_reward_coin, tx_context::sender(ctx));
+        
+        // Transfer protocol fee to treasury (for now, we'll transfer to contract deployer)
+        let protocol_fee_coin = coin::from_balance<T>(protocol_fee_balance, ctx);
+        transfer::public_transfer(protocol_fee_coin, @0x20de068c090f53b54861ccce99d8b2d51ed245ea777ce6760677e339c2287a08); // Contract admin
+        
+        // 5. Update position collateral amount
+        alp::reduce_position_collateral(position, collateral_to_liquidate);
+        
+        // 6. Get updated position info for event
+        let (remaining_collateral, remaining_debt, _, _) = alp::get_position_info(position);
         
         // Transfer remaining ALP payment back to liquidator if any
         if (coin::value(&alp_payment) > 0) {
@@ -147,21 +166,17 @@ module alp::liquidation {
             coin::destroy_zero(alp_payment);
         };
         
-        // In a full implementation, collateral would be transferred to liquidator and protocol
-        // For now, we'll emit the event with the details
-        
-        // Note: Cannot access position.id directly as it's private to the alp module
-        // In a real implementation, the liquidation event would be emitted by the alp module
+        // Emit liquidation event
         event::emit(LiquidationExecuted {
-            position_id: @0x0, // Placeholder - would need proper position ID access
+            position_id: alp::get_position_id(position),
             liquidator: tx_context::sender(ctx),
-            position_owner: tx_context::sender(ctx), // Placeholder - would need proper owner access
+            position_owner: alp::get_position_owner(position),
             alp_burned: liquidation_amount,
             collateral_liquidated: collateral_to_liquidate,
             liquidator_reward,
             protocol_fee,
-            remaining_collateral: new_collateral,
-            remaining_debt: new_debt,
+            remaining_collateral,
+            remaining_debt,
         });
     }
     

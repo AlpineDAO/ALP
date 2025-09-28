@@ -751,6 +751,29 @@ module alp::alp {
         transfer::public_transfer(coins, recipient);
     }
 
+    // ======== Liquidation Helper Functions ========
+    
+    /// Get mutable reference to vault balance (for liquidation)
+    public fun get_vault_balance_mut<T>(vault: &mut CollateralVault<T>): &mut Balance<T> {
+        &mut vault.balance
+    }
+    
+    /// Reduce position collateral amount (for liquidation)
+    public fun reduce_position_collateral(position: &mut CollateralPosition, amount: u64) {
+        assert!(position.collateral_amount >= amount, EInvalidAmount);
+        position.collateral_amount = position.collateral_amount - amount;
+    }
+    
+    /// Get position ID (for events)
+    public fun get_position_id(position: &CollateralPosition): address {
+        object::uid_to_address(&position.id)
+    }
+    
+    /// Get position owner (for events)
+    public fun get_position_owner(position: &CollateralPosition): address {
+        position.owner
+    }
+
     // ======== Test-only Functions ========
 
     #[test_only]
